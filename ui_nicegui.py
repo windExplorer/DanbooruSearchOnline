@@ -15,6 +15,7 @@ import os
 import json as _json
 import traceback
 from dataclasses import asdict
+from fastapi.responses import PlainTextResponse
 
 # ── 全局异常捕获：确保启动崩溃时有完整堆栈输出到日志 ──────────
 def _excepthook(exc_type, exc_value, exc_tb):
@@ -675,6 +676,16 @@ if __name__ in {'__main__', '__mp_main__'}:
 
     app.mount('/api', api_app)
 
+    @app.get('/robots.txt')
+    def robots_txt():
+        content = (
+            "User-agent: *\n"
+            "Allow: /$\n"
+            "Disallow: /api/\n"
+            "Disallow: /_nicegui/\n"
+            "Disallow: /socket.io/\n"
+        )
+        return PlainTextResponse(content)
     ui.run(
         host=host,
         port=port,
