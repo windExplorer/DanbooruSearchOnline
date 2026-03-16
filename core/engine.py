@@ -17,6 +17,7 @@ import os
 import re
 import time
 from pathlib import Path
+from datetime import datetime
 from typing import Optional
 
 import jieba
@@ -375,18 +376,27 @@ class DanbooruTagger:
         self.paths.ensure_dir()
         st_save(
             {
-                'emb_en':      self.emb_en.half(),
-                'emb_cn':      self.emb_cn.half(),
-                'emb_wiki':    self.emb_wiki.half(),
+                'emb_en': self.emb_en.half(),
+                'emb_cn': self.emb_cn.half(),
+                'emb_wiki': self.emb_wiki.half(),
                 'emb_cn_core': self.emb_cn_core.half(),
             },
             str(self.paths.embeddings),
         )
         save_cols = ['name', 'cn_name', 'cn_core', 'wiki', 'nsfw', 'category', 'post_count']
         self.df[save_cols].to_parquet(str(self.paths.metadata), index=False)
+
+        # 获取当前时间并格式化为字符串
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # 将时间信息加入到 JSON 中
         with open(self.paths.meta_json, 'w', encoding='utf-8') as f:
-            json.dump({'schema_version': SCHEMA_VERSION}, f)
-        print(f'[Engine] 缓存保存完成（{len(self.df)} 条记录）')
+            json.dump({
+                'schema_version': SCHEMA_VERSION,
+                'updated_at': current_time  # 添加了时间字段
+            }, f, ensure_ascii=False, indent=4)  # 顺便加了 indent=4 让 JSON 格式更美观易读
+
+        print(f'[Engine] 缓存保存完成（{len(self.df)} 条记录），生成时间: {current_time}')
 
     def _load_from_cache(self) -> None:
         tensors          = st_load(str(self.paths.embeddings), device=self.device)

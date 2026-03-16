@@ -116,7 +116,8 @@ class DanbooruSearchUI:
         ui.add_head_html('''
             <meta name="description" content="基于语义匹配的 Danbooru 标签搜索引擎，支持中英双语描述、多维匹配、智能分词与共现关联推荐。">
             <meta name="keywords" content="Danbooru, AI绘画, Stable Diffusion, 提示词, 标签搜索,RAG, Prompt, NovelAI">
-
+            <meta name="google-site-verification" content="cx4sl9Mb172GUFL556JFwKCP-pT3naQcmlMriy5B8ls" />
+            
             <style>
                 .nsfw-blur-cell      { filter: blur(8px); opacity: 0.5; transition: all 0.3s ease;
                                        pointer-events: none !important; user-select: none !important; }
