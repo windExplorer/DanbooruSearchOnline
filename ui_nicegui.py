@@ -80,6 +80,8 @@ class DanbooruSearchUI:
     def __init__(self):
         # 页面状态
         self.search_count_label = None
+        self.current_search_interacted = True # 标记当前搜索是否发生过交互 (初始为True防误触)
+
         self.full_table_data: list[dict] = []
         self.current_query_str: str = ""
         self.full_tags_str: str = ""
@@ -110,6 +112,29 @@ class DanbooruSearchUI:
 
         self.selected_layers = {'英文': True, '中文扩展词': True, '释义': True, '中文核心词': True}
         self.selected_cats = {'General': True, 'Copyright': True, 'Character': True}
+
+    def _update_footer_text(self):
+        """仅在前端展示总搜索和总访问，隐藏内部追踪指标"""
+        if self.search_count_label is not None:
+            try:
+                total = counter.get()
+                visits = counter.get_visits()
+                text = f'累计搜索 {total:,} 次 | 累计访问 {visits:,} 次'
+                self.search_count_label.text = text
+            except AttributeError:
+                pass
+
+    def _mark_interaction(self, e=None):
+        """静默记录用户的有效交互。如果当前搜索没被标记，则触发后台成功计数。"""
+        if not self.current_search_interacted:
+            self.current_search_interacted = True
+
+            async def silent_success_update():
+                try:
+                    await counter.increment_success()
+                except Exception:
+                    pass
+            asyncio.create_task(silent_success_update())
 
     def build_page(self):
         ui.colors(primary='#4A90E2', secondary='#5E6C84', accent='#FF6B6B')
@@ -290,8 +315,10 @@ class DanbooruSearchUI:
                         row_key='tag',
                     ).classes('w-full')
                     self.result_table.on('selection', self._update_selection_display)
+                    # 监听外部链接点击（触发交互成功）
+                    self.result_table.on('link_click', self._mark_interaction)
 
-                    # Vue slots
+                    # Vue slots (在链接处增加了 @click.stop="$emit('link_click', col.value)")
                     self.result_table.add_slot('body', '''
                         <q-tr :props="props" :class="props.row._nsfw_blocked ? 'nsfw-row-blocked' : ''">
                             <q-td auto-width>
@@ -317,7 +344,7 @@ class DanbooruSearchUI:
                                             <a :href="'https://danbooru.donmai.us/wiki_pages/'+col.value"
                                                target="_blank"
                                                class="text-primary hover:underline font-bold inline-flex items-center"
-                                               style="text-decoration:none;" @click.stop>
+                                               style="text-decoration:none;" @click.stop="$emit('link_click', col.value)">
                                                 {{ col.value }}
                                                 <q-icon name="open_in_new" size="xs" class="q-ml-xs opacity-50"/>
                                             </a>
@@ -347,13 +374,10 @@ class DanbooruSearchUI:
                         </q-tr>
                     ''')
 
-        # ── 底部计数页脚（三轨制显示） ──────────────────────────────────────────
+        # ── 底部计数页脚 ──────────────────────────────────────────
         with ui.element('div').classes('w-full text-center py-4 mt-2'):
-            try:
-                display_text = f'累计搜索 {counter.get():,} 次 | 累计访问 {counter.get_visits():,} 次'
-            except AttributeError:
-                display_text = f'累计搜索 {counter.get():,} 次'
-            self.search_count_label = ui.label(display_text).classes('text-xs text-gray-400')
+            self.search_count_label = ui.label('正在加载数据...').classes('text-xs text-gray-400')
+            self._update_footer_text()
 
 
     # ── 交互与业务逻辑 ─────────────────────────────────────────
@@ -421,17 +445,15 @@ class DanbooruSearchUI:
             )
             response = await run.io_bound(tagger.search, request)
 
-            # 搜索计数静默更新
+            # 搜索计数、词频统计静默更新
             async def silent_counter_update():
                 try:
-                    new_count = await counter.increment()
-                    if self.search_count_label is not None:
-                        try:
-                            self.search_count_label.text = f'累计搜索 {new_count:,} 次 | 累计访问 {counter.get_visits():,} 次'
-                        except AttributeError:
-                            self.search_count_label.text = f'累计搜索 {new_count:,} 次'
+                    await counter.increment()
+                    if response.keywords:
+                        await counter.add_keywords(response.keywords)
+                    self._update_footer_text()
                 except Exception as e:
-                    print(f"[Counter Error] 后台静默更新搜索计数失败: {e}", flush=True)
+                    print(f"[Counter Error] 后台静默更新计数失败: {e}", flush=True)
 
             asyncio.create_task(silent_counter_update())
 
@@ -474,6 +496,9 @@ class DanbooruSearchUI:
 
             ui.notify(f'找到 {len(table_data)} 个标签', type='positive')
 
+            # 搜索结果渲染完毕后，重置交互状态（布下“零点击”陷阱）
+            self.current_search_interacted = False
+
         except RuntimeError as e:
             if 'deleted' in str(e).lower() or 'client' in str(e).lower():
                 return
@@ -494,18 +519,15 @@ class DanbooruSearchUI:
                 pass
 
     def copy_selection(self):
+        self._mark_interaction() # 标记成功交互
         ui.clipboard.write(self.selected_display.value)
         ui.notify('已复制选中标签!', type='positive')
 
-        # 复制操作静默统计
         async def silent_copy_update():
             try:
-                new_copies = await counter.increment_copy()
-                if self.search_count_label is not None:
-                    self.search_count_label.text = f'累计搜索 {counter.get():,} 次 | 累计访问 {counter.get_visits():,} 次'
+                await counter.increment_copy()
             except Exception as e:
-                print(f"[Counter Error] 复制计数失败: {e}")
-
+                pass
         asyncio.create_task(silent_copy_update())
 
     def _get_selected_tags(self) -> list[str]:
@@ -530,11 +552,14 @@ class DanbooruSearchUI:
             self.selection_count_label.text = str(len(all_tags))
 
     def _update_selection_display(self, _e):
-        if self.result_table is None:
-            return
+        if self.result_table is None: return
+        self._mark_interaction() # 标记成功交互 (勾选了多选框)
+
         all_tags = self._get_selected_tags()
         self.selected_display.value = ", ".join(all_tags)
-        self.selection_count_label.text = str(len(all_tags))
+        if self.selection_count_label is not None:
+            self.selection_count_label.text = str(len(all_tags))
+
         if all_tags:
             self._refresh_related_from_selection(all_tags, self.input_nsfw.value)
         else:
@@ -566,6 +591,7 @@ class DanbooruSearchUI:
                 ui.tooltip(tooltip).classes('text-sm whitespace-pre')
 
             def _on_click(tag=r.tag):
+                self._mark_interaction() # 标记成功交互 (点击了关联推荐)
                 current = self._get_selected_tags()
                 if tag in current:
                     current.remove(tag)
@@ -636,9 +662,8 @@ async def main_page():
     # --- 页面真实访问量统计 (静默触发) ---
     async def silent_visit_update():
         try:
-            new_visits = await counter.increment_visit()
-            if app_ui.search_count_label is not None:
-                app_ui.search_count_label.text = f'累计搜索 {counter.get():,} 次 | 累计访问 {new_visits:,} 次'
+            await counter.increment_visit()
+            app_ui._update_footer_text()
         except Exception:
             pass
     asyncio.create_task(silent_visit_update())
@@ -687,6 +712,7 @@ if __name__ in {'__main__', '__mp_main__'}:
             "Disallow: /socket.io/\n"
         )
         return PlainTextResponse(content)
+
     ui.run(
         host=host,
         port=port,

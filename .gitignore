@@ -8,3 +8,4 @@ tags_embedding/
 .idea/
 test.py
 *.sh
+tempsave/
