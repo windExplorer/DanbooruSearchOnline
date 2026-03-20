@@ -25,6 +25,10 @@ tags:
 
 **ComfyUI 插件版本：** [ComfyUI-DanbooruSearcher](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher)
 
+本项目的数据库由Danbooru API抓取而成，使用LLM进行语义扩充和中文翻译。角色名、作品名使用二次元垂类数据库Bangumi API进行精确查询，尽可能地避免了在角色名、作品名上的幻觉问题。
+
+**数据库生成代码：** https://github.com/SuzumiyaAkizuki/danbooru-tag-pipeline
+
 ---
 
 ## 核心特性
