@@ -113,6 +113,9 @@ class DanbooruSearchUI:
         self.selected_layers = {'英文': True, '中文扩展词': True, '释义': True, '中文核心词': True}
         self.selected_cats = {'General': True, 'Copyright': True, 'Character': True}
 
+        # ── [NEW] 反馈按钮引用，搜索完成后激活 ──
+        self.bad_case_btn = None
+
     def _update_footer_text(self):
         """仅在前端展示总搜索和总访问，隐藏内部追踪指标"""
         if self.search_count_label is not None:
@@ -287,8 +290,21 @@ class DanbooruSearchUI:
                                 ui.label('已选标签:').classes('font-bold text-primary')
                                 self.selection_count_label = ui.label('0').classes(
                                     'bg-primary text-white px-2 rounded-full text-sm')
-                            copy_btn = ui.button('复制选中', icon='content_copy').props('dense unelevated color=primary')
-                            copy_btn.on_click(self.copy_selection)
+                            # ── 右侧按钮组 ──────────────────────────────
+                            with ui.row().classes('items-center gap-2'):
+                                # [NEW] 反馈按钮：灰色问号，悬浮时显示提示语
+                                self.bad_case_btn = ui.button(
+                                    '没搜到？', icon='help_outline',
+                                ).props('dense flat color=grey-6').classes('text-sm')
+                                self.bad_case_btn.tooltip(
+                                    '点击此处以反馈失败案例。\n'
+                                    '您的搜索词将被匿名收集用于优化模型（不包含个人隐私）。'
+                                )
+                                self.bad_case_btn.disable()   # 初始禁用，搜索完成后激活
+                                self.bad_case_btn.on_click(self.report_bad_case)
+                                # ─────────────────────────────────────────
+                                copy_btn = ui.button('复制选中', icon='content_copy').props('dense unelevated color=primary')
+                                copy_btn.on_click(self.copy_selection)
 
                         self.selected_display = ui.textarea().classes('w-full mt-2') \
                             .props('outlined dense rows=2 readonly bg-white')
@@ -422,6 +438,10 @@ class DanbooruSearchUI:
         self.spinner.classes(remove='hidden')
         ui.notify('正在搜索...', type='info')
 
+        # 搜索开始时禁用反馈按钮，防止提交上一次搜索的 bad_case
+        if self.bad_case_btn is not None:
+            self.bad_case_btn.disable()
+
         target_layers_list = [k for k, v in self.selected_layers.items() if v]
         target_cats_list   = [k for k, v in self.selected_cats.items()   if v]
 
@@ -496,8 +516,12 @@ class DanbooruSearchUI:
 
             ui.notify(f'找到 {len(table_data)} 个标签', type='positive')
 
-            # 搜索结果渲染完毕后，重置交互状态（布下“零点击”陷阱）
+            # 搜索结果渲染完毕后，重置交互状态（布下"零点击"陷阱）
             self.current_search_interacted = False
+
+            # [NEW] 搜索完成后激活反馈按钮（每次搜索只能点一次，点击后在 report_bad_case 中禁用）
+            if self.bad_case_btn is not None:
+                self.bad_case_btn.enable()
 
         except RuntimeError as e:
             if 'deleted' in str(e).lower() or 'client' in str(e).lower():
@@ -529,6 +553,22 @@ class DanbooruSearchUI:
             except Exception as e:
                 pass
         asyncio.create_task(silent_copy_update())
+
+    async def report_bad_case(self):
+        query = self.current_query_str.strip()
+        if len(query) <= 1:
+            ui.notify('搜索词太短，无法提交反馈。', type='warning', timeout=2000)
+            return
+        if self.bad_case_btn is not None:
+            self.bad_case_btn.disable()
+        try:
+            await counter.add_bad_case(query)
+            ui.notify('感谢反馈！我们会持续优化。', type='positive', timeout=3000)
+        except Exception as e:
+            print(f'[UI] bad_case 记录异常: {e}')
+            ui.notify('记录失败，请稍后再试。', type='warning', timeout=3000)
+            if self.bad_case_btn is not None:
+                self.bad_case_btn.enable()
 
     def _get_selected_tags(self) -> list[str]:
         table_tags = [row['tag'] for row in self.result_table.selected] if self.result_table else []
