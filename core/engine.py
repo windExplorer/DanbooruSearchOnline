@@ -399,14 +399,12 @@ class DanbooruTagger:
         print(f'[Engine] 缓存保存完成（{len(self.df)} 条记录），生成时间: {current_time}')
 
     def _load_from_cache(self) -> None:
-        tensors          = st_load(str(self.paths.embeddings), device=self.device)
-        self.emb_en      = tensors['emb_en'].float()
-        self.emb_cn      = tensors['emb_cn'].float()
-        self.emb_wiki    = tensors['emb_wiki'].float()
+        tensors = st_load(str(self.paths.embeddings), device=self.device)
+        self.emb_en = tensors['emb_en'].float()
+        self.emb_cn = tensors['emb_cn'].float()
+        self.emb_wiki = tensors['emb_wiki'].float()
         self.emb_cn_core = tensors['emb_cn_core'].float()
         self.df = pd.read_parquet(str(self.paths.metadata))
-        with open(self.paths.meta_json, 'r', encoding='utf-8') as f:
-            json.load(f)  # 仅读取，max_log_count 从 df 实时计算
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
 
     def _cached_schema_version(self) -> int:

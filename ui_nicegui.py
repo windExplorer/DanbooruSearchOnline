@@ -687,9 +687,7 @@ class DanbooruSearchUI:
         self._update_selection_display(None)
 
     def on_nsfw_toggle(self, e):
-        args = e.args
-        val = args[0] if isinstance(args, list) else args.get('value', args) if isinstance(args, dict) else args
-        self.handle_nsfw_change(bool(val))
+        self.handle_nsfw_change(self.input_nsfw.value)
 
 
 # 页面

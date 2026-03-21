@@ -188,13 +188,17 @@ async def _perform_sync():
         if not has_dirty:
             return
 
-        # 快照脏数据并立即清空，不阻塞主线程
+        # 快照脏数据并立即全部清零，防止同步期间新增量被错误抵消
         c_adds, v_adds, cp_adds, s_adds = (
             _dirty_count, _dirty_visits, _dirty_copies, _dirty_successes
         )
         k_adds  = dict(_dirty_keywords)
         bc_adds = list(_dirty_bad_cases)
 
+        _dirty_count     = 0
+        _dirty_visits    = 0
+        _dirty_copies    = 0
+        _dirty_successes = 0
         _dirty_keywords.clear()
         _dirty_bad_cases.clear()
 
@@ -207,12 +211,7 @@ async def _perform_sync():
         )
 
         if success:
-            _dirty_count     -= c_adds
-            _dirty_visits    -= v_adds
-            _dirty_copies    -= cp_adds
-            _dirty_successes -= s_adds
             _last_sync = time.time()
-
             _memory_count     = max(_memory_count,     l_total)
             _memory_visits    = max(_memory_visits,    l_visits)
             _memory_copies    = max(_memory_copies,    l_copies)
@@ -222,10 +221,13 @@ async def _perform_sync():
             _memory_bad_cases.clear()
             _memory_bad_cases.extend(l_bad_cases)
         else:
-            # 同步失败：把脏数据放回，等下次重试
+            # 同步失败：将快照数据放回脏区，等下次重试
+            _dirty_count     += c_adds
+            _dirty_visits    += v_adds
+            _dirty_copies    += cp_adds
+            _dirty_successes += s_adds
             _dirty_keywords.update(k_adds)
             _dirty_bad_cases.extend(bc_adds)
-
 
 # ── 公共 API ──────────────────────────────────────
 
