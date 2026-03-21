@@ -117,13 +117,16 @@ class DanbooruSearchUI:
         self.bad_case_btn = None
 
     def _update_footer_text(self):
-        """仅在前端展示总搜索和总访问，隐藏内部追踪指标"""
         if self.search_count_label is not None:
             try:
                 total = counter.get()
                 visits = counter.get_visits()
-                text = f'累计搜索 {total:,} 次 | 累计访问 {visits:,} 次'
-                self.search_count_label.text = text
+                self.search_count_label.content = (
+                    f'累计搜索 {total:,} 次 | 累计访问 {visits:,} 次 | '
+                    f'<a href="https://sakizuki-danboorusearch.hf.space/api/docs" '
+                    f'target="_blank" rel="noopener noreferrer" '
+                    f'class="text-blue-400 hover:text-blue-600 hover:underline">使用 API 服务</a>'
+                )
             except AttributeError:
                 pass
 
@@ -192,9 +195,19 @@ class DanbooruSearchUI:
         if not DanbooruTagger.is_ready():
             asyncio.ensure_future(self._hide_banner_when_ready())
 
-        with ui.card().classes('w-full max-w-6xl mx-auto bg-orange-50 border-l-4 border-orange-500 mb-2'):
-            with ui.column().classes('gap-1'):
-                ui.label('⚠️ 注意事项 / Note').classes('text-lg font-bold text-orange-800')
+        # ── 可折叠注意事项卡片（默认折叠，折叠态只显示 Like/Star 提示）──
+        with ui.card().classes('w-full max-w-6xl mx-auto bg-orange-50 border-l-4 border-orange-500 mb-2 p-0 overflow-hidden'):
+            with ui.expansion(value=True).classes('w-full') as notice_expansion:
+                notice_expansion.add_slot('header', '''
+                    <div class="flex items-center gap-2 px-4 py-2 w-full flex-wrap">
+                        <span class="text-base font-bold text-orange-800">⚠️ 注意事项 / Note</span>
+                        <span v-if="!props.expanded" class="text-sm text-gray-600 ml-1">
+                             如果觉得好用，请点击顶部给本 Space 点个
+                            <strong>Like ❤️</strong>，或前往 GitHub 点个 <strong>Star ⭐</strong>！
+                        </span>
+                    </div>
+                ''')
+                # 展开后的完整注意事项
                 ui.markdown("""
 - **AI 辅助**：基于语义匹配，结果未必绝对准确 (Results may contain errors)
 - **内容警告**：查找结果可能会包括 NSFW 内容 (May include NSFW content)
@@ -202,8 +215,9 @@ class DanbooruSearchUI:
 - **标签类型**：仅显示特征、角色与作品标签，且仅显示 Danbooru 频数 ≥100 的标签 (General, Character, and Copyright only, Freq>=100)
 - **使用指南**：[DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)
 - **ComfyUI 插件**：[ComfyUI-DanbooruSearcher](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher)
+- **使用API服务：** [API文档](https://sakizuki-danboorusearch.hf.space/api/docs)
 - **支持作者**：如果觉得好用，请点击顶部给本 Space 点个 **Like ❤️**，或前往 GitHub 点个 **Star ⭐**！
-""").classes('text-sm text-gray-800 ml-4')
+""").classes('text-sm text-gray-800 px-4 pb-3')
 
         with ui.column().classes('w-full max-w-6xl mx-auto p-4 gap-6'):
             with ui.row().classes('items-center gap-2'):
@@ -298,7 +312,7 @@ class DanbooruSearchUI:
                                 ).props('dense flat color=grey-6').classes('text-sm')
                                 self.bad_case_btn.tooltip(
                                     '点击此处以反馈失败案例。\n'
-                                    '您的搜索词将被匿名收集用于优化模型（不包含个人隐私）。'
+                                    '您的搜索词将被匿名收集用于优化引擎（不包含个人隐私）。'
                                 )
                                 self.bad_case_btn.disable()   # 初始禁用，搜索完成后激活
                                 self.bad_case_btn.on_click(self.report_bad_case)
@@ -392,7 +406,7 @@ class DanbooruSearchUI:
 
         # ── 底部计数页脚 ──────────────────────────────────────────
         with ui.element('div').classes('w-full text-center py-4 mt-2'):
-            self.search_count_label = ui.label('正在加载数据...').classes('text-xs text-gray-400')
+            self.search_count_label = ui.html('正在加载数据...').classes('text-xs text-gray-400')
             self._update_footer_text()
 
 
