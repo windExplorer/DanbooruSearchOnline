@@ -1,49 +1,51 @@
 """
-counter.py
-──────────
+core/counter.py
+──────────────
 极简持久化计数器（核心业务指标：总搜索、总访问、复制次数、成功交互、词频聚合、bad_case）。
-数据只存储于 HuggingFace Dataset，无任何本地落盘操作。
+
+数据持久化到 Hub（HF Dataset repo 或魔搭 Dataset repo），通过 platform_utils 屏蔽差异。
+无任何本地落盘操作。
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Optional
 
+from platform_utils import get_counter_cfg, read_bytes, upload_bytes, CounterConfig
+
 # ── 核心状态变量 ────────────────────────────────
-_memory_count: int = 0      # 总搜索次数
+_memory_count: int = 0
 _dirty_count: int = 0
 
-_memory_visits: int = 0     # 总访问次数
+_memory_visits: int = 0
 _dirty_visits: int = 0
 BASE_VISITS: int = 0
 
-_memory_copies: int = 0     # 总复制次数
+_memory_copies: int = 0
 _dirty_copies: int = 0
 BASE_COPIES: int = 0
 
-_memory_successes: int = 0  # 搜索后有交互的次数（用于算零点击率）
+_memory_successes: int = 0
 _dirty_successes: int = 0
 
-_memory_keywords: Counter = Counter()   # 内存中的热词字典
-_dirty_keywords: Counter = Counter()    # 尚未同步的词频增量
-MAX_KEYWORDS_LIMIT = 200                # 云端最多只保存前 200 个热词
+_memory_keywords: Counter = Counter()
+_dirty_keywords: Counter = Counter()
+MAX_KEYWORDS_LIMIT = 200
 
-# ── bad_case 状态变量 ────────────────────────────
-_memory_bad_cases: list[dict] = []      # 内存中全量 bad_case（最新在前）
-_dirty_bad_cases: list[dict] = []       # 尚未同步的增量
-MAX_BAD_CASES = 50                      # 云端最多只保存最近 50 条
+_memory_bad_cases: list[dict] = []
+_dirty_bad_cases: list[dict] = []
+MAX_BAD_CASES = 50
 
 _last_sync: float = 0.0
 _sync_lock: Optional[asyncio.Lock] = None
 
-SYNC_INTERVAL = 1800        # 每 30 分钟同步一次
-SYNC_THRESHOLD = 200        # 或各项增量之和达到 200 次同步一次
+SYNC_INTERVAL = 1800       # 每 30 分钟同步一次
+SYNC_THRESHOLD = 200       # 或各项增量之和达到 200 次时同步
 
 
 def _get_sync_lock() -> asyncio.Lock:
@@ -53,122 +55,103 @@ def _get_sync_lock() -> asyncio.Lock:
     return _sync_lock
 
 
-def _get_config():
-    token = os.environ.get("HF_TOKEN")
-    username = os.environ.get("HF_USERNAME") or os.environ.get("SPACE_AUTHOR_NAME")
-    repo_id = os.environ.get("COUNTER_REPO") or (
-        f"{username}/DanbooruSearchStats" if username else None
-    )
-    return repo_id, token
+# ── 远端 IO ───────────────────────────────────────────────────────────────────
+
+_COUNTER_FILE = 'count.json'
 
 
-# ── 远端 IO 操作 ──────────────────────────────────
+def _parse_remote_data(raw: bytes) -> tuple[int, int, int, int, dict, list]:
+    """解析远端 JSON bytes，返回 (total, visits, copies, successes, keywords, bad_cases)。"""
+    try:
+        data = json.loads(raw.decode('utf-8'))
+        r_total     = int(data.get('total',     0))
+        r_visits    = int(data.get('visits',    BASE_VISITS))
+        r_copies    = int(data.get('copies',    BASE_COPIES))
+        r_successes = int(data.get('successes', int(r_total * 0.75)))
+        r_keywords  = data.get('hot_keywords', {})
+        r_bad_cases = data.get('bad_cases', [])
+        return r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases
+    except Exception:
+        return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
+
 
 def _read_remote() -> tuple[int, int, int, int, dict, list]:
-    repo_id, token = _get_config()
-    if not repo_id or not token:
+    cfg = get_counter_cfg()
+    if not cfg.available:
         return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
 
-    try:
-        from huggingface_hub import hf_hub_download
-        path = hf_hub_download(
-            repo_id=repo_id, repo_type="dataset", filename="count.json", token=token,
-        )
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            r_total     = int(data.get("total", 0))
-            r_visits    = int(data.get("visits", BASE_VISITS))
-            r_copies    = int(data.get("copies", BASE_COPIES))
-            r_successes = int(data.get("successes", int(r_total * 0.75)))
-            r_keywords  = data.get("hot_keywords", {})
-            r_bad_cases = data.get("bad_cases", [])
-            return r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases
-    except Exception as e:
-        print(f"[Counter] 读取远端失败: {e}")
+    raw = read_bytes(_COUNTER_FILE, cfg)
+    if raw is None:
         return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
+    return _parse_remote_data(raw)
 
 
 def _sync_remote_task(
-    adds_count, adds_visits, adds_copies, adds_successes,
-    adds_keywords: dict, adds_bad_cases: list,
+    adds_count: int,
+    adds_visits: int,
+    adds_copies: int,
+    adds_successes: int,
+    adds_keywords: dict,
+    adds_bad_cases: list,
 ) -> tuple[bool, int, int, int, int, dict, list]:
-    repo_id, token = _get_config()
-    if not repo_id or not token:
+    """
+    读取远端最新值 → 合并增量 → 上传。
+    返回 (success, new_total, new_visits, new_copies, new_successes, keywords, bad_cases)。
+    """
+    cfg: CounterConfig = get_counter_cfg()
+    if not cfg.available:
         return False, 0, 0, 0, 0, {}, []
 
-    from huggingface_hub import HfApi, hf_hub_download
-    from huggingface_hub.utils import HfHubHTTPError
-    api = HfApi(token=token)
+    # ── 读取最新远端值（避免覆盖其他实例写入）─────────────────────────────
+    raw = read_bytes(_COUNTER_FILE, cfg)
+    if raw is not None:
+        r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases = _parse_remote_data(raw)
+    else:
+        r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases = (
+            0, BASE_VISITS, BASE_COPIES, 0, {}, []
+        )
 
-    for _ in range(3):
-        try:
-            try:
-                path = hf_hub_download(
-                    repo_id=repo_id, repo_type="dataset", filename="count.json",
-                    force_download=True, token=token,
-                )
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    r_total     = int(data.get("total", 0))
-                    r_visits    = int(data.get("visits", BASE_VISITS))
-                    r_copies    = int(data.get("copies", BASE_COPIES))
-                    r_successes = int(data.get("successes", int(r_total * 0.75)))
-                    r_keywords  = data.get("hot_keywords", {})
-                    r_bad_cases = data.get("bad_cases", [])
-            except Exception:
-                r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases = (
-                    0, BASE_VISITS, BASE_COPIES, 0, {}, []
-                )
+    # ── 合并 ──────────────────────────────────────────────────────────────
+    n_total     = r_total     + adds_count
+    n_visits    = r_visits    + adds_visits
+    n_copies    = r_copies    + adds_copies
+    n_successes = r_successes + adds_successes
 
-            # 合并数字增量
-            n_total     = r_total     + adds_count
-            n_visits    = r_visits    + adds_visits
-            n_copies    = r_copies    + adds_copies
-            n_successes = r_successes + adds_successes
+    merged_keywords = Counter(r_keywords)
+    for word, count in adds_keywords.items():
+        merged_keywords[word] += count
+    top_keywords = dict(merged_keywords.most_common(MAX_KEYWORDS_LIMIT))
 
-            # 合并词频并截断 Top 200
-            merged_keywords = Counter(r_keywords)
-            for word, count in adds_keywords.items():
-                merged_keywords[word] += count
-            top_keywords = dict(merged_keywords.most_common(MAX_KEYWORDS_LIMIT))
+    merged_bad_cases = (adds_bad_cases + r_bad_cases)[:MAX_BAD_CASES]
 
-            # 合并 bad_cases：本地新增（最新）插到远端列表头部，截断到上限
-            merged_bad_cases = (adds_bad_cases + r_bad_cases)[:MAX_BAD_CASES]
+    # ── 序列化 ────────────────────────────────────────────────────────────
+    content = json.dumps({
+        'total':        n_total,
+        'visits':       n_visits,
+        'copies':       n_copies,
+        'successes':    n_successes,
+        'hot_keywords': top_keywords,
+        'bad_cases':    merged_bad_cases,
+    }, ensure_ascii=False, indent=2).encode('utf-8')
 
-            content = json.dumps({
-                "total":        n_total,
-                "visits":       n_visits,
-                "copies":       n_copies,
-                "successes":    n_successes,
-                "hot_keywords": top_keywords,
-                "bad_cases":    merged_bad_cases,
-            }, ensure_ascii=False, indent=2)
+    commit_msg = (
+        f'Sync: 搜索:{n_total} | 成功:{n_successes} | '
+        f'复制:{n_copies} | 访问:{n_visits} | bad_cases:{len(merged_bad_cases)}'
+    )
 
-            api.upload_file(
-                path_or_fileobj=content.encode("utf-8"),
-                path_in_repo="count.json",
-                repo_id=repo_id, repo_type="dataset", token=token,
-                commit_message=(
-                    f"Sync: 搜索:{n_total} | 成功:{n_successes} | "
-                    f"复制:{n_copies} | 访问:{n_visits} | bad_cases:{len(merged_bad_cases)}"
-                ),
-            )
-            print(
-                f"[Counter] ☁️ 同步成功！搜索:{n_total}, 成功交互:{n_successes}, "
-                f"复制:{n_copies}, bad_cases:{len(merged_bad_cases)}"
-            )
-            return True, n_total, n_visits, n_copies, n_successes, top_keywords, merged_bad_cases
-
-        except HfHubHTTPError as e:
-            if "412 Precondition Failed" in str(e):
-                time.sleep(1)
-            else:
-                break
-        except Exception:
-            break
+    # ── 上传（platform_utils 处理平台差异与重试）─────────────────────────
+    ok = upload_bytes(content, _COUNTER_FILE, cfg, commit_msg, retries=3, retry_delay=1.0)
+    if ok:
+        print(
+            f'[Counter] ☁️ 同步成功！搜索:{n_total}, 成功交互:{n_successes}, '
+            f'复制:{n_copies}, bad_cases:{len(merged_bad_cases)}'
+        )
+        return True, n_total, n_visits, n_copies, n_successes, top_keywords, merged_bad_cases
 
     return False, 0, 0, 0, 0, {}, []
 
+
+# ── 后台同步协程 ──────────────────────────────────────────────────────────────
 
 async def _perform_sync():
     global _dirty_count, _dirty_visits, _dirty_copies, _dirty_successes
@@ -188,7 +171,7 @@ async def _perform_sync():
         if not has_dirty:
             return
 
-        # 快照脏数据并立即全部清零，防止同步期间新增量被错误抵消
+        # 快照脏数据，立即清零，防止同步期间新增量被错误抵消
         c_adds, v_adds, cp_adds, s_adds = (
             _dirty_count, _dirty_visits, _dirty_copies, _dirty_successes
         )
@@ -229,14 +212,17 @@ async def _perform_sync():
             _dirty_keywords.update(k_adds)
             _dirty_bad_cases.extend(bc_adds)
 
-# ── 公共 API ──────────────────────────────────────
+
+# ── 公共 API ──────────────────────────────────────────────────────────────────
 
 async def init():
+    """启动时从 Hub 拉取最新计数，初始化内存状态。"""
     global _memory_count, _memory_visits, _memory_copies, _memory_successes
     global _memory_keywords, _memory_bad_cases, _last_sync
 
-    repo_id, token = _get_config()
-    if not repo_id or not token:
+    cfg = get_counter_cfg()
+    if not cfg.available:
+        print(f'[Counter] 计数器未配置（platform={cfg.platform}），仅使用内存计数。')
         return
 
     loop = asyncio.get_running_loop()
@@ -249,17 +235,20 @@ async def init():
     _memory_bad_cases.clear()
     _memory_bad_cases.extend(r_bad_cases)
     _last_sync = time.time()
+    print(
+        f'[Counter] 初始化完成（{cfg.platform}）：搜索={_memory_count}, '
+        f'访问={_memory_visits}, 复制={_memory_copies}'
+    )
 
 
 def _check_sync():
-    repo_id, token = _get_config()
-    if repo_id and token and (
-        (time.time() - _last_sync > SYNC_INTERVAL)
-        or (
-            _dirty_count + _dirty_visits + _dirty_copies + _dirty_successes
-            + len(_dirty_keywords) + len(_dirty_bad_cases)
-        ) >= SYNC_THRESHOLD
-    ):
+    cfg = get_counter_cfg()
+    if not cfg.available:
+        return
+    if (time.time() - _last_sync > SYNC_INTERVAL) or (
+        _dirty_count + _dirty_visits + _dirty_copies + _dirty_successes
+        + len(_dirty_keywords) + len(_dirty_bad_cases)
+    ) >= SYNC_THRESHOLD:
         asyncio.create_task(_perform_sync())
 
 
@@ -296,23 +285,15 @@ async def add_keywords(words: list[str]):
     _check_sync()
 
 async def add_bad_case(query: str) -> None:
-    """
-    记录一条 bad_case，写入内存脏列表，随下次常规同步上报。
-    调用方应确保 query 长度 > 2。
-    """
     global _dirty_bad_cases, _memory_bad_cases
     entry = {
-        "q": query,
-        "t": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        'q': query,
+        't': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }
-    # 乐观更新内存（最新在前，截断到上限）
     _memory_bad_cases.insert(0, entry)
     if len(_memory_bad_cases) > MAX_BAD_CASES:
         _memory_bad_cases[:] = _memory_bad_cases[:MAX_BAD_CASES]
-
-    # 写入脏列表（最新在前，sync 时拼到远端列表头部）
     _dirty_bad_cases.insert(0, entry)
-
     _check_sync()
 
 

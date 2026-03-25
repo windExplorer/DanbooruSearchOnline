@@ -10,7 +10,7 @@ DanbooruTagger 核心引擎
 """
 
 from __future__ import annotations
-from huggingface_hub import hf_hub_download
+
 import asyncio
 import json
 import os
@@ -28,6 +28,12 @@ from safetensors.torch import load_file as st_load, save_file as st_save
 from sentence_transformers import SentenceTransformer, util
 
 from .models import SearchRequest, SearchResponse, TagResult
+from platform_utils import (
+    PLATFORM,
+    is_cloud,
+    download_file,
+    resolve_model_path,
+)
 
 
 # ──────────────────────────────────────────────
@@ -60,13 +66,8 @@ CAT_MAP: dict[str, str] = {
     '0': 'General', '1': 'Artist', '3': 'Copyright', '4': 'Character', '5': 'Meta',
 }
 
-LOCAL_MODEL_PATH = 'my_model_bge_m3'
-HF_MODEL_ID      = 'BAAI/bge-m3'
-SCHEMA_VERSION   = 2   # 升级此值将自动触发全量重建，用于破坏性格式变更
+SCHEMA_VERSION = 2   # 升级此值将自动触发全量重建，用于破坏性格式变更
 
-
-def is_running_on_huggingface_space() -> bool:
-    return os.environ.get("SPACE_ID") is not None
 
 # ──────────────────────────────────────────────
 # 缓存路径助手
@@ -98,20 +99,19 @@ class DanbooruTagger:
 
     @classmethod
     def is_ready(cls) -> bool:
-        """引擎单例是否已完成加载"""
         return cls._instance is not None and cls._instance.is_loaded
 
     @classmethod
     async def get_instance(cls, **kwargs) -> 'DanbooruTagger':
         if cls._lock is None:
             cls._lock = asyncio.Lock()
-
         async with cls._lock:
             if cls._instance is None:
                 inst = cls(**kwargs)
                 await asyncio.to_thread(inst.load)
                 cls._instance = inst
             return cls._instance
+
     def __init__(
         self,
         model_path: Optional[str] = None,
@@ -119,14 +119,8 @@ class DanbooruTagger:
         cache_dir:  str = 'tags_embedding',
         cooc_file:  str = 'origin_database/cooccurrence_clean.csv',
     ):
-        if model_path:
-            self.model_path = model_path
-        elif os.path.exists(LOCAL_MODEL_PATH):
-            print(f'[Engine] 检测到本地模型 "{LOCAL_MODEL_PATH}"，使用本地。')
-            self.model_path = LOCAL_MODEL_PATH
-        else:
-            print(f'[Engine] 未找到本地模型，将使用 HF ID "{HF_MODEL_ID}"。')
-            self.model_path = HF_MODEL_ID
+        # 模型路径：优先使用显式传入，否则交由 platform_utils 解析
+        self.model_path = model_path or resolve_model_path()
 
         self.csv_path  = csv_file
         self.device    = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -140,48 +134,23 @@ class DanbooruTagger:
         self.emb_wiki:      Optional[torch.Tensor]                = None
         self.emb_cn_core:   Optional[torch.Tensor]                = None
         self.max_log_count: float                                 = 15.0
-        # 共现表：tag -> [(neighbor, cooc_count), ...] 按 PMI 降序
         self.cooc: dict[str, list[tuple[str, int]]]               = {}
-        # name -> df 行号索引，load() 完成后建立，避免 get_related 每次重建
         self._name_to_idx: dict[str, int]                         = {}
         self.is_loaded:     bool                                  = False
 
     # ── 初始化 ────────────────────────────────────────────────────────────
+
     def load(self) -> None:
-        """同步加载 在线程池中调用"""
+        """同步加载，在线程池中调用。"""
         if self.is_loaded:
             return
         t0 = time.time()
-        # ====== 新增：环境检测与强制拉取真实的 LFS 文件 ======
-        space_id = os.environ.get('SPACE_ID')
-        if space_id:
-            print(f'[Engine] 检测到 HF Space 线上环境 ({space_id})，正在拉取HF数据文件...')
-            try:
-                # 1. 拉取真实源数据
-                self.csv_path = hf_hub_download(repo_id=space_id, repo_type="space", filename="origin_database/tags_enhanced.csv")
-                self.cooc_file = hf_hub_download(repo_id=space_id, repo_type="space",
-                                                 filename="origin_database/cooccurrence_clean.parquet")
 
-                # 2. 拉取真实的缓存文件！
-                real_meta = hf_hub_download(repo_id=space_id, repo_type="space",
-                                            filename="tags_embedding/tags_metadata.parquet")
-                real_emb = hf_hub_download(repo_id=space_id, repo_type="space",
-                                           filename="tags_embedding/danbooru_multiview_embeddings.safetensors")
-                real_json = hf_hub_download(repo_id=space_id, repo_type="space",
-                                            filename="tags_embedding/version_data.json")
+        # ── 云端环境：从对应平台 Hub 拉取数据文件 ──────────────────────────
+        if is_cloud():
+            self._pull_cloud_files()
 
-                # 覆盖原来的路径，让底层读取我们刚刚下载好的真文件
-                from pathlib import Path
-                self.paths.metadata = Path(real_meta)
-                self.paths.embeddings = Path(real_emb)
-                self.paths.meta_json = Path(real_json)
-
-                print('[Engine] 线上真实数据和缓存文件拉取完毕！')
-            except Exception as e:
-                print(f'[Engine] 拉取线上文件警告 (可能影响启动): {e}')
-        else:
-            print('[Engine] 检测到本地环境，直接使用本地数据文件。')
-        # ============================================
+        # ── 缓存校验与构建 ─────────────────────────────────────────────────
         if not self.paths.exists():
             print('\n' + '=' * 50)
             print('[Engine] 未找到缓存，开始首次构建（约 1~3 分钟）...')
@@ -207,6 +176,49 @@ class DanbooruTagger:
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
         self.is_loaded = True
         print(f'[Engine] 初始化完成，耗时 {time.time() - t0:.2f}s')
+
+    def _pull_cloud_files(self) -> None:
+        """
+        从当前云平台拉取所有数据文件，并将路径写回实例属性。
+        HF / MS 的差异完全由 platform_utils.download_file() 屏蔽。
+        """
+        print(f'[Engine] 云端环境 ({PLATFORM})，开始拉取数据文件...')
+
+        # ── HF 平台需要额外指定 repo_id（SPACE_ID）和 repo_type ──────────
+        extra_hf_kwargs = {}
+        if PLATFORM == 'hf':
+            extra_hf_kwargs = {
+                'hf_repo_id':   os.environ.get('SPACE_ID'),
+                'hf_repo_type': 'space',
+            }
+
+        def pull(filename: str) -> str:
+            try:
+                return download_file(filename, **extra_hf_kwargs)
+            except Exception as e:
+                print(f'[Engine] 拉取 {filename} 失败（非致命）: {e}')
+                return filename   # 回退到原始路径，让后续逻辑决定是否重建
+
+        self.csv_path  = pull('origin_database/tags_enhanced.csv')
+        self.cooc_file = pull('origin_database/cooccurrence_clean.parquet')
+
+        meta_path = pull('tags_embedding/tags_metadata.parquet')
+        emb_path  = pull('tags_embedding/danbooru_multiview_embeddings.safetensors')
+        json_path = pull('tags_embedding/version_data.json')
+
+        # 只有三个缓存文件都成功拉取才覆盖路径，防止部分失败导致 exists() 误判
+        if all(
+            Path(p).is_file()
+            for p in (meta_path, emb_path, json_path)
+        ):
+            self.paths.metadata   = Path(meta_path)
+            self.paths.embeddings = Path(emb_path)
+            self.paths.meta_json  = Path(json_path)
+            print('[Engine] 云端数据文件拉取完毕。')
+        else:
+            print('[Engine] 部分缓存文件拉取失败，将触发本地重建。')
+
+    # ── 搜索 ──────────────────────────────────────────────────────────────
 
     def search(self, request: SearchRequest) -> SearchResponse:
         if not self.is_loaded:
@@ -272,7 +284,7 @@ class DanbooruTagger:
             results=valid, keywords=keywords,
         )
 
-    # 全量构建
+    # ── 全量构建 ──────────────────────────────────────────────────────────
 
     def _build_full(self) -> None:
         print(f'[Engine] 全量读取 {self.csv_path} ...')
@@ -289,13 +301,9 @@ class DanbooruTagger:
         self.emb_cn_core = self._encode_texts(self.df['cn_core'].tolist())
         self._save_cache()
 
-    # 增量更新
+    # ── 增量更新 ──────────────────────────────────────────────────────────
 
     def _smart_update(self) -> None:
-        """
-        只 encode 变更行，不重建全库。
-        操作顺序：删除 → 修改 → 新增
-        """
         print('[Engine] 检查增量变更...')
         t0 = time.time()
 
@@ -324,7 +332,6 @@ class DanbooruTagger:
 
         print(f'[Engine] 变更 → 新增: {len(added_names)}  修改: {len(changed_names)}  删除: {len(deleted_names)}')
 
-        # 删除
         if deleted_names:
             keep_mask = ~self.df['name'].isin(set(deleted_names))
             keep_pos  = [i for i, v in enumerate(keep_mask) if v]
@@ -335,7 +342,6 @@ class DanbooruTagger:
             self.emb_cn_core = self.emb_cn_core[keep_pos]
             cached_idx = {n: i for i, n in enumerate(self.df['name'])}
 
-        # 修改
         if changed_names:
             changed_rows = new_df[new_df['name'].isin(set(changed_names))].reset_index(drop=True)
             vecs_en   = self._encode_texts(changed_rows['name'].tolist())
@@ -351,7 +357,6 @@ class DanbooruTagger:
                 for col in changed_rows.columns:
                     self.df.at[ci, col] = changed_rows.at[j, col]
 
-        # 新增
         if added_names:
             added_rows = new_df[new_df['name'].isin(set(added_names))].reset_index(drop=True)
             vecs_en   = self._encode_texts(added_rows['name'].tolist())
@@ -364,13 +369,12 @@ class DanbooruTagger:
             self.emb_cn_core = torch.cat([self.emb_cn_core, vecs_core], dim=0)
             self.df = pd.concat([self.df, added_rows], ignore_index=True)
 
-        # 保存
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
         self._save_cache()
         print(f'[Engine] 增量更新完成，耗时 {time.time() - t0:.2f}s（共 {len(self.df)} 条）')
 
-    # 缓存 I/O
+    # ── 缓存 I/O ──────────────────────────────────────────────────────────
 
     def _save_cache(self) -> None:
         self.paths.ensure_dir()
@@ -386,23 +390,20 @@ class DanbooruTagger:
         save_cols = ['name', 'cn_name', 'cn_core', 'wiki', 'nsfw', 'category', 'post_count']
         self.df[save_cols].to_parquet(str(self.paths.metadata), index=False)
 
-        # 获取当前时间并格式化为字符串
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        # 将时间信息加入到 JSON 中
         with open(self.paths.meta_json, 'w', encoding='utf-8') as f:
             json.dump({
                 'schema_version': SCHEMA_VERSION,
-                'updated_at': current_time  # 添加了时间字段
-            }, f, ensure_ascii=False, indent=4)  # 顺便加了 indent=4 让 JSON 格式更美观易读
+                'updated_at': current_time,
+            }, f, ensure_ascii=False, indent=4)
 
         print(f'[Engine] 缓存保存完成（{len(self.df)} 条记录），生成时间: {current_time}')
 
     def _load_from_cache(self) -> None:
         tensors = st_load(str(self.paths.embeddings), device=self.device)
-        self.emb_en = tensors['emb_en'].float()
-        self.emb_cn = tensors['emb_cn'].float()
-        self.emb_wiki = tensors['emb_wiki'].float()
+        self.emb_en      = tensors['emb_en'].float()
+        self.emb_cn      = tensors['emb_cn'].float()
+        self.emb_wiki    = tensors['emb_wiki'].float()
         self.emb_cn_core = tensors['emb_cn_core'].float()
         self.df = pd.read_parquet(str(self.paths.metadata))
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
@@ -414,7 +415,7 @@ class DanbooruTagger:
         except Exception:
             return 0
 
-    # 编码 & 预处理
+    # ── 编码 & 预处理 ──────────────────────────────────────────────────────
 
     def _encode_texts(self, texts: list[str]) -> torch.Tensor:
         return self.model.encode(
@@ -428,8 +429,9 @@ class DanbooruTagger:
         try:
             self.model = SentenceTransformer(self.model_path, device=self.device)
         except Exception as e:
-            print(f'[Engine] 本地模型失败，回退到 HF: {e}')
-            self.model = SentenceTransformer(HF_MODEL_ID, device=self.device)
+            print(f'[Engine] 指定路径加载失败，尝试重新解析: {e}')
+            fallback = resolve_model_path()
+            self.model = SentenceTransformer(fallback, device=self.device)
 
     def _read_csv_robust(self, path: str) -> pd.DataFrame:
         for enc in ['utf-8', 'gbk', 'gb18030']:
@@ -489,7 +491,7 @@ class DanbooruTagger:
                         tokens.append(part)
         return tokens
 
-    # 关联推荐
+    # ── 关联推荐 ──────────────────────────────────────────────────────────
 
     def get_related(
         self,
@@ -498,16 +500,12 @@ class DanbooruTagger:
         limit: int = 20,
         show_nsfw: bool = True,
     ) -> list:
-        """
-        给定种子 tag 列表，从共现表查关联推荐。
-        对每个种子 tag 取共现邻居并累加 count，按累加分降序返回。
-        """
         from .models import RelatedTag
         if not self.cooc or not seed_tags:
             return []
         exclude = exclude or set()
         scores: dict[str, int] = {}
-        tag_sources: dict[str, list[str]] = {}   # neighbor -> 触发它的种子 tag 列表
+        tag_sources: dict[str, list[str]] = {}
         for seed in seed_tags:
             for neighbor, cnt in self.cooc.get(seed, []):
                 if neighbor in exclude or neighbor == seed:
@@ -517,8 +515,7 @@ class DanbooruTagger:
         if not scores:
             return []
 
-        # 归一化：除以 post_count^0.5，压制超高频 tag ──
-        name_to_idx = self._name_to_idx  # 使用预建索引
+        name_to_idx = self._name_to_idx
         normalized: dict[str, float] = {}
         for tag_name, raw_score in scores.items():
             if tag_name in name_to_idx:
@@ -552,14 +549,9 @@ class DanbooruTagger:
         return results
 
     def _load_cooc(self) -> None:
-        """
-        加载共现表到内存 dict，文件不存在时静默跳过。
-        """
-        # 确定实际要读的源文件（支持直接传入 parquet）
         csv_path     = Path(self.cooc_file)
         parquet_path = csv_path.with_suffix('.parquet')
 
-        # 选择读取路径
         if parquet_path.is_file() and (
             not csv_path.is_file()
             or parquet_path.stat().st_mtime >= csv_path.stat().st_mtime
@@ -592,8 +584,7 @@ class DanbooruTagger:
             dst = np.concatenate([tag_b, tag_a])
             cnt = np.concatenate([counts, counts])
 
-
-            sort_idx = np.lexsort((-cnt, src))   # 先按 src 升序，再按 cnt 降序
+            sort_idx = np.lexsort((-cnt, src))
             src = src[sort_idx]
             dst = dst[sort_idx]
             cnt = cnt[sort_idx]

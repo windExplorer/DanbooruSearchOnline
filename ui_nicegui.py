@@ -6,9 +6,10 @@ NiceGUI 前端层。
 ▸ 只负责渲染 / 交互。
 ▸ 调用 core.engine.DanbooruTagger，通过 core.models 的数据结构通信。
 ▸ 不包含任何算法逻辑。
+▸ 平台相关配置（host/port/云端判断）统一由 platform_utils 提供。
 """
 import sys
-sys.stdout.reconfigure(line_buffering=True) # 强制 Python 实时输出日志
+sys.stdout.reconfigure(line_buffering=True)
 print("==== [Step 1] 脚本开始执行 ====", flush=True)
 import asyncio
 import os
@@ -17,7 +18,6 @@ import traceback
 from dataclasses import asdict
 from fastapi.responses import PlainTextResponse
 
-# ── 全局异常捕获：确保启动崩溃时有完整堆栈输出到日志 ──────────
 def _excepthook(exc_type, exc_value, exc_tb):
     print("=" * 60, flush=True)
     print("FATAL ERROR ON STARTUP:", flush=True)
@@ -33,16 +33,13 @@ try:
     from api_fastapi import app as api_app
     from core.engine import DanbooruTagger
     from core.models import RelatedTag, SearchRequest
+    from platform_utils import is_cloud, get_host_port
 except Exception:
     traceback.print_exc()
     raise
 
 
-def is_running_on_huggingface_space() -> bool:
-    return os.environ.get("SPACE_ID") is not None
-
-
-# 表格列定义
+# ── 表格列定义 ─────────────────────────────────────────────────────────────────
 
 BASE_COLUMNS = [
     {'name': 'tag',         'label': '匹配标签', 'field': 'tag',         'align': 'left', 'sortable': True},
@@ -59,7 +56,7 @@ OPTIONAL_COLS = {
     'source':   {'name': 'source',         'label': '匹配来源', 'field': 'source'},
 }
 
-# TagResult 2 dict
+
 def result_to_row(r, nsfw_visible: bool) -> dict:
     d = asdict(r)
     d['_nsfw_blocked'] = (r.nsfw == '1') and not nsfw_visible
@@ -74,13 +71,12 @@ def apply_nsfw_filter(rows: list[dict], show_nsfw: bool) -> list[dict]:
     return result
 
 
-# ── 面向对象重构的 UI 类 ───────────────────────────────────
+# ── UI 类 ─────────────────────────────────────────────────────────────────────
 
 class DanbooruSearchUI:
     def __init__(self):
-        # 页面状态
         self.search_count_label = None
-        self.current_search_interacted = True # 标记当前搜索是否发生过交互 (初始为True防误触)
+        self.current_search_interacted = True
 
         self.full_table_data: list[dict] = []
         self.current_query_str: str = ""
@@ -95,7 +91,6 @@ class DanbooruSearchUI:
         self.current_related: list = []
         self.chip_extra_selected: set = set()
 
-        # UI 控件引用
         self.init_banner = None
         self.input_top_k = None
         self.input_limit = None
@@ -113,7 +108,6 @@ class DanbooruSearchUI:
         self.selected_layers = {'英文': True, '中文扩展词': True, '释义': True, '中文核心词': True}
         self.selected_cats = {'General': True, 'Copyright': True, 'Character': True}
 
-        # ── [NEW] 反馈按钮引用，搜索完成后激活 ──
         self.bad_case_btn = None
 
     def _update_footer_text(self):
@@ -123,7 +117,7 @@ class DanbooruSearchUI:
                 visits = counter.get_visits()
                 self.search_count_label.content = (
                     f'累计搜索 {total:,} 次 | 累计访问 {visits:,} 次 | '
-                    f'<a href="https://sakizuki-danboorusearch.hf.space/api/docs" '
+                    f'<a href="/api/docs" '
                     f'target="_blank" rel="noopener noreferrer" '
                     f'class="text-blue-400 hover:text-blue-600 hover:underline">使用 API 服务</a>'
                 )
@@ -131,7 +125,6 @@ class DanbooruSearchUI:
                 pass
 
     def _mark_interaction(self, e=None):
-        """静默记录用户的有效交互。如果当前搜索没被标记，则触发后台成功计数。"""
         if not self.current_search_interacted:
             self.current_search_interacted = True
 
@@ -146,9 +139,9 @@ class DanbooruSearchUI:
         ui.colors(primary='#4A90E2', secondary='#5E6C84', accent='#FF6B6B')
         ui.add_head_html('''
             <meta name="description" content="基于语义匹配的 Danbooru 标签搜索引擎，支持中英双语描述、多维匹配、智能分词与共现关联推荐。">
-            <meta name="keywords" content="Danbooru, AI绘画, Stable Diffusion, 提示词, 标签搜索,RAG, Prompt, NovelAI">
+            <meta name="keywords" content="Danbooru, AI绘画, Stable Diffusion, 提示词, 标签搜索, RAG, Prompt, NovelAI">
             <meta name="google-site-verification" content="cx4sl9Mb172GUFL556JFwKCP-pT3naQcmlMriy5B8ls" />
-            
+
             <style>
                 .nsfw-blur-cell      { filter: blur(8px); opacity: 0.5; transition: all 0.3s ease;
                                        pointer-events: none !important; user-select: none !important; }
@@ -182,7 +175,6 @@ class DanbooruSearchUI:
             </script>
         ''')
 
-        # 引擎预热提示
         self.init_banner = ui.card().classes(
             'w-full max-w-6xl mx-auto bg-blue-50 border-l-4 border-blue-400 mb-2'
         )
@@ -195,7 +187,6 @@ class DanbooruSearchUI:
         if not DanbooruTagger.is_ready():
             asyncio.ensure_future(self._hide_banner_when_ready())
 
-        # ── 可折叠注意事项卡片（默认折叠，折叠态只显示 Like/Star 提示）──
         with ui.card().classes('w-full max-w-6xl mx-auto bg-orange-50 border-l-4 border-orange-500 mb-2 p-0 overflow-hidden'):
             with ui.expansion(value=True).classes('w-full') as notice_expansion:
                 notice_expansion.add_slot('header', '''
@@ -207,7 +198,6 @@ class DanbooruSearchUI:
                         </span>
                     </div>
                 ''')
-                # 展开后的完整注意事项
                 ui.markdown("""
 - **AI 辅助**：基于语义匹配，结果未必绝对准确 (Results may contain errors)
 - **内容警告**：查找结果可能会包括 NSFW 内容 (May include NSFW content)
@@ -215,7 +205,7 @@ class DanbooruSearchUI:
 - **标签类型**：仅显示特征、角色与作品标签，且仅显示 Danbooru 频数 ≥100 的标签 (General, Character, and Copyright only, Freq>=100)
 - **使用指南**：[DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)
 - **ComfyUI 插件**：[ComfyUI-DanbooruSearcher](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher)
-- **使用API服务：** [API文档](https://sakizuki-danboorusearch.hf.space/api/docs)
+- **使用API服务：** [API文档](/api/docs)
 - **支持作者**：如果觉得好用，请点击顶部给本 Space 点个 **Like ❤️**，或前往 GitHub 点个 **Star ⭐**！
 """).classes('text-sm text-gray-800 px-4 pb-3')
 
@@ -224,7 +214,6 @@ class DanbooruSearchUI:
                 ui.icon('search', size='2em', color='primary')
                 ui.label('Danbooru 标签模糊搜索').classes('text-2xl font-bold text-gray-800')
 
-            # 基础控制面板
             with ui.card().classes('w-full'):
                 with ui.grid(columns=4).classes('w-full gap-8 items-center'):
                     self.input_top_k = ui.number('Top K (语义相关)', value=5, min=1, max=50) \
@@ -239,7 +228,6 @@ class DanbooruSearchUI:
                     self.input_nsfw = ui.switch('显示 NSFW', value=False).props('color=red').classes('w-full')
                     self.input_nsfw.on('update:model-value', self.on_nsfw_toggle)
 
-            # 高级设置
             with ui.expansion('高级设置 (Advanced Settings)', icon='tune').classes('w-full bg-gray-50 border rounded-lg'):
                 with ui.column().classes('w-full p-4 gap-4'):
                     self.input_segment = ui.switch('启用智能分词 (Segmentation)', value=True).props('color=primary')
@@ -272,7 +260,6 @@ class DanbooruSearchUI:
                     self.sw_layer.on('update:model-value', self.update_table_columns)
                     self.sw_source.on('update:model-value', self.update_table_columns)
 
-            # 搜索输入
             with ui.card().classes('w-full p-0 overflow-hidden'):
                 with ui.column().classes('w-full p-6 gap-4'):
                     ui.label('画面描述').classes('text-lg font-bold text-gray-700')
@@ -289,7 +276,6 @@ class DanbooruSearchUI:
 
                     self.search_input.on('keydown.ctrl.enter', self.perform_search)
 
-            # 结果区
             with ui.row().classes('w-full gap-6'):
                 with ui.card().classes('w-1/3 flex-grow'):
                     ui.label('推荐 Prompt (全部)').classes('font-bold text-gray-600')
@@ -304,9 +290,7 @@ class DanbooruSearchUI:
                                 ui.label('已选标签:').classes('font-bold text-primary')
                                 self.selection_count_label = ui.label('0').classes(
                                     'bg-primary text-white px-2 rounded-full text-sm')
-                            # ── 右侧按钮组 ──────────────────────────────
                             with ui.row().classes('items-center gap-2'):
-                                # [NEW] 反馈按钮：灰色问号，悬浮时显示提示语
                                 self.bad_case_btn = ui.button(
                                     '没搜到？', icon='help_outline',
                                 ).props('dense flat color=grey-6').classes('text-sm')
@@ -314,16 +298,14 @@ class DanbooruSearchUI:
                                     '点击此处以反馈失败案例。\n'
                                     '您的搜索词将被匿名收集用于优化引擎（不包含个人隐私）。'
                                 )
-                                self.bad_case_btn.disable()   # 初始禁用，搜索完成后激活
+                                self.bad_case_btn.disable()
                                 self.bad_case_btn.on_click(self.report_bad_case)
-                                # ─────────────────────────────────────────
                                 copy_btn = ui.button('复制选中', icon='content_copy').props('dense unelevated color=primary')
                                 copy_btn.on_click(self.copy_selection)
 
                         self.selected_display = ui.textarea().classes('w-full mt-2') \
                             .props('outlined dense rows=2 readonly bg-white')
 
-                    # 关联推荐折叠面板
                     with ui.expansion(
                         '关联推荐',
                         icon='auto_awesome',
@@ -345,10 +327,8 @@ class DanbooruSearchUI:
                         row_key='tag',
                     ).classes('w-full')
                     self.result_table.on('selection', self._update_selection_display)
-                    # 监听外部链接点击（触发交互成功）
                     self.result_table.on('link_click', self._mark_interaction)
 
-                    # Vue slots (在链接处增加了 @click.stop="$emit('link_click', col.value)")
                     self.result_table.add_slot('body', '''
                         <q-tr :props="props" :class="props.row._nsfw_blocked ? 'nsfw-row-blocked' : ''">
                             <q-td auto-width>
@@ -404,13 +384,11 @@ class DanbooruSearchUI:
                         </q-tr>
                     ''')
 
-        # ── 底部计数页脚 ──────────────────────────────────────────
         with ui.element('div').classes('w-full text-center py-4 mt-2'):
             self.search_count_label = ui.html('正在加载数据...').classes('text-xs text-gray-400')
             self._update_footer_text()
 
-
-    # ── 交互与业务逻辑 ─────────────────────────────────────────
+    # ── 交互逻辑 ──────────────────────────────────────────────────────────────
 
     async def _hide_banner_when_ready(self):
         while not DanbooruTagger.is_ready():
@@ -452,7 +430,6 @@ class DanbooruSearchUI:
         self.spinner.classes(remove='hidden')
         ui.notify('正在搜索...', type='info')
 
-        # 搜索开始时禁用反馈按钮，防止提交上一次搜索的 bad_case
         if self.bad_case_btn is not None:
             self.bad_case_btn.disable()
 
@@ -479,7 +456,6 @@ class DanbooruSearchUI:
             )
             response = await run.io_bound(tagger.search, request)
 
-            # 搜索计数、词频统计静默更新
             async def silent_counter_update():
                 try:
                     await counter.increment()
@@ -530,10 +506,8 @@ class DanbooruSearchUI:
 
             ui.notify(f'找到 {len(table_data)} 个标签', type='positive')
 
-            # 搜索结果渲染完毕后，重置交互状态（布下"零点击"陷阱）
             self.current_search_interacted = False
 
-            # [NEW] 搜索完成后激活反馈按钮（每次搜索只能点一次，点击后在 report_bad_case 中禁用）
             if self.bad_case_btn is not None:
                 self.bad_case_btn.enable()
 
@@ -557,14 +531,14 @@ class DanbooruSearchUI:
                 pass
 
     def copy_selection(self):
-        self._mark_interaction() # 标记成功交互
+        self._mark_interaction()
         ui.clipboard.write(self.selected_display.value)
         ui.notify('已复制选中标签!', type='positive')
 
         async def silent_copy_update():
             try:
                 await counter.increment_copy()
-            except Exception as e:
+            except Exception:
                 pass
         asyncio.create_task(silent_copy_update())
 
@@ -607,7 +581,7 @@ class DanbooruSearchUI:
 
     def _update_selection_display(self, _e):
         if self.result_table is None: return
-        self._mark_interaction() # 标记成功交互 (勾选了多选框)
+        self._mark_interaction()
 
         all_tags = self._get_selected_tags()
         self.selected_display.value = ", ".join(all_tags)
@@ -645,7 +619,7 @@ class DanbooruSearchUI:
                 ui.tooltip(tooltip).classes('text-sm whitespace-pre')
 
             def _on_click(tag=r.tag):
-                self._mark_interaction() # 标记成功交互 (点击了关联推荐)
+                self._mark_interaction()
                 current = self._get_selected_tags()
                 if tag in current:
                     current.remove(tag)
@@ -704,14 +678,13 @@ class DanbooruSearchUI:
         self.handle_nsfw_change(self.input_nsfw.value)
 
 
-# 页面
+# ── 页面路由 ───────────────────────────────────────────────────────────────────
 
 @ui.page('/')
 async def main_page():
     app_ui = DanbooruSearchUI()
     app_ui.build_page()
 
-    # --- 页面真实访问量统计 (静默触发) ---
     async def silent_visit_update():
         try:
             await counter.increment_visit()
@@ -721,26 +694,21 @@ async def main_page():
     asyncio.create_task(silent_visit_update())
 
 
-# 入口
-if __name__ in {'__main__', '__mp_main__'}:
-    host = '0.0.0.0' if is_running_on_huggingface_space() else '127.0.0.1'
-    port = 7860 if is_running_on_huggingface_space() else 1111
+# ── 入口 ───────────────────────────────────────────────────────────────────────
 
-    # 程序启动时立即在后台预热引擎
+if __name__ in {'__main__', '__mp_main__'}:
+    host, port = get_host_port()   # 由 platform_utils 统一决定
+
     @app.on_startup
     def _warmup():
         async def background_init_tasks():
             await asyncio.sleep(5)
             print("==== [System] 开始预热计数器与引擎 ====", flush=True)
-
             await counter.init()
             await DanbooruTagger.get_instance()
-
             print("==== [System] 后台预热全部完成！ ====", flush=True)
-
         asyncio.create_task(background_init_tasks())
 
-    # 关机钩子
     @app.on_shutdown
     def _shutdown():
         try:
@@ -773,7 +741,7 @@ if __name__ in {'__main__', '__mp_main__'}:
         host=host,
         port=port,
         title='Danbooru Tags Searcher',
-        reload=not is_running_on_huggingface_space(),
-        show=not is_running_on_huggingface_space(),
+        reload=not is_cloud(),
+        show=not is_cloud(),
         reconnect_timeout=120,
     )
