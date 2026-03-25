@@ -5,6 +5,7 @@ __pychahce__
 my_model_bge_m3/
 *.ignore
 tags_embedding/
+origin_database/
 .idea/
 test.py
 *.sh

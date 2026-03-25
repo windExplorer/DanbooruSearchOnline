@@ -14,6 +14,7 @@ print("==== [Step 1] 脚本开始执行 ====", flush=True)
 import asyncio
 import os
 import json as _json
+import subprocess
 import traceback
 from dataclasses import asdict
 from fastapi.responses import PlainTextResponse
@@ -56,6 +57,15 @@ OPTIONAL_COLS = {
     'source':   {'name': 'source',         'label': '匹配来源', 'field': 'source'},
 }
 
+def _get_git_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except Exception:
+        return os.environ.get('COMMIT_SHA', 'unknown')[:7]
 
 def result_to_row(r, nsfw_visible: bool) -> dict:
     d = asdict(r)
@@ -115,11 +125,13 @@ class DanbooruSearchUI:
             try:
                 total = counter.get()
                 visits = counter.get_visits()
+                commit = _get_git_commit()
                 self.search_count_label.content = (
                     f'累计搜索 {total:,} 次 | 累计访问 {visits:,} 次 | '
                     f'<a href="/api/docs" '
                     f'target="_blank" rel="noopener noreferrer" '
                     f'class="text-blue-400 hover:text-blue-600 hover:underline">使用 API 服务</a>'
+                    f' | <span class="font-mono text-gray-300">版本号: {commit}</span>'
                 )
             except AttributeError:
                 pass
