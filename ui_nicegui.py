@@ -754,6 +754,9 @@ if __name__ in {'__main__', '__mp_main__'}:
         )
         return PlainTextResponse(content)
 
+    @app.head('/')
+    async def head_root():
+        return PlainTextResponse("")
     ui.run(
         host=host,
         port=port,
