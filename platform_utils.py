@@ -77,6 +77,17 @@ def get_host_port() -> tuple[str, int]:
     return '127.0.0.1', 1111
 
 
+def nsfw_allowed() -> bool:
+    """
+    返回当前平台是否允许用户开启 NSFW 显示。
+    魔搭（MS）平台禁用 NSFW，其余平台默认允许。
+    如需在任意平台强制禁用，可设置环境变量 DISABLE_NSFW=1。
+    """
+    if os.environ.get('DISABLE_NSFW', '0') == '1':
+        return False
+    return PLATFORM != 'ms'
+
+
 # ── 计数器配置 ────────────────────────────────────────────────────────────────
 
 @dataclass

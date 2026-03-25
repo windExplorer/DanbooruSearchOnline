@@ -33,7 +33,7 @@ try:
     from api_fastapi import app as api_app
     from core.engine import DanbooruTagger
     from core.models import RelatedTag, SearchRequest
-    from platform_utils import is_cloud, get_host_port
+    from platform_utils import is_cloud, get_host_port, nsfw_allowed
 except Exception:
     traceback.print_exc()
     raise
@@ -226,7 +226,11 @@ class DanbooruSearchUI:
                             self.input_weight = ui.slider(min=0.0, max=1.0, value=0.15, step=0.05).classes('w-full')
                             ui.label().bind_text_from(self.input_weight, 'value', lambda v: f"{v:.2f}")
                     self.input_nsfw = ui.switch('显示 NSFW', value=False).props('color=red').classes('w-full')
-                    self.input_nsfw.on('update:model-value', self.on_nsfw_toggle)
+                    if not nsfw_allowed():
+                        self.input_nsfw.disable()
+                        self.input_nsfw.tooltip('NSFW 内容在当前平台不可用')
+                    else:
+                        self.input_nsfw.on('update:model-value', self.on_nsfw_toggle)
 
             with ui.expansion('高级设置 (Advanced Settings)', icon='tune').classes('w-full bg-gray-50 border rounded-lg'):
                 with ui.column().classes('w-full p-4 gap-4'):
