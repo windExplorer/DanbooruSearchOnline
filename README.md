@@ -4,6 +4,7 @@ emoji: 👁
 colorFrom: red
 colorTo: indigo
 sdk: docker
+app_port: 7860
 pinned: false
 license: mit
 short_description: 基于语义匹配的 Danbooru 标签搜索引擎，支持多维匹配、智能分词与共现关联推荐。
