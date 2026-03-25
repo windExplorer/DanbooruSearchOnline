@@ -718,7 +718,7 @@ if __name__ in {'__main__', '__mp_main__'}:
     @app.on_startup
     def _warmup():
         async def background_init_tasks():
-            await asyncio.sleep(5)
+            await asyncio.sleep(20)
             print("==== [System] 开始预热计数器与引擎 ====", flush=True)
             await counter.init()
             await DanbooruTagger.get_instance()
