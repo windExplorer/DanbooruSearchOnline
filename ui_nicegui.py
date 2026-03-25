@@ -754,6 +754,10 @@ if __name__ in {'__main__', '__mp_main__'}:
 
     app.mount('/api', api_app)
 
+    @app.get('/googlebd34b54f8562aa06.html')
+    def google_verification():
+        return PlainTextResponse('google-site-verification: googlebd34b54f8562aa06.html')
+
     @app.get('/robots.txt')
     def robots_txt():
         content = (
