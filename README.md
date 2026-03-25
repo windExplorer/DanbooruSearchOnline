@@ -20,7 +20,7 @@ tags:
 
 本项目提供一种基于语义匹配的 Danbooru 标签查找方案。用户可以通过输入日常语言或模糊描述，查找并匹配 Danbooru 数据集中对应的标准标签，适用于辅助构建 Stable Diffusion、NovelAI 等 AI 绘画工具的提示词（Prompt）。
 
-目前支持使用汉语和英语进行查找。
+目前支持使用汉语和英语进行查找
 
 **立即使用：** https://huggingface.co/spaces/SAkizuki/DanbooruSearch
 
