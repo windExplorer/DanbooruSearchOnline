@@ -723,6 +723,7 @@ if __name__ in {'__main__', '__mp_main__'}:
             await counter.init()
             await DanbooruTagger.get_instance()
             print("==== [System] 后台预热全部完成！ ====", flush=True)
+            print("如果您在Log中看到此信息，但Space并未正常运行，请尝试访问：https://sakizuki-danboorusearch.hf.space/", flush=True)
         asyncio.create_task(background_init_tasks())
 
     @app.on_shutdown
