@@ -143,7 +143,7 @@ def _sync_remote_task(
     ok = upload_bytes(content, _COUNTER_FILE, cfg, commit_msg, retries=3, retry_delay=1.0)
     if ok:
         print(
-            f'[Counter] ☁️ 同步成功！搜索:{n_total}, 成功交互:{n_successes}, '
+            f'[Counter] 同步成功！搜索:{n_total}, 成功交互:{n_successes}, '
             f'复制:{n_copies}, bad_cases:{len(merged_bad_cases)}'
         )
         return True, n_total, n_visits, n_copies, n_successes, top_keywords, merged_bad_cases
