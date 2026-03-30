@@ -80,7 +80,12 @@ def _read_remote() -> tuple[int, int, int, int, dict, list]:
     if not cfg.available:
         return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
 
-    raw = read_bytes(_COUNTER_FILE, cfg)
+    try:
+        raw = read_bytes(_COUNTER_FILE, cfg)
+    except Exception as e:
+        print(f'[Counter] 启动读取远端数据异常: {e}')
+        return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
+
     if raw is None:
         return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
     return _parse_remote_data(raw)
@@ -94,16 +99,17 @@ def _sync_remote_task(
     adds_keywords: dict,
     adds_bad_cases: list,
 ) -> tuple[bool, int, int, int, int, dict, list]:
-    """
-    读取远端最新值 → 合并增量 → 上传。
-    返回 (success, new_total, new_visits, new_copies, new_successes, keywords, bad_cases)。
-    """
     cfg: CounterConfig = get_counter_cfg()
     if not cfg.available:
         return False, 0, 0, 0, 0, {}, []
 
-    # ── 读取最新远端值（避免覆盖其他实例写入）─────────────────────────────
-    raw = read_bytes(_COUNTER_FILE, cfg)
+    # 尝试读取最新远端值
+    try:
+        raw = read_bytes(_COUNTER_FILE, cfg)
+    except Exception as e:
+        print(f'[Counter] 远端读取异常，中止本次同步以保护数据: {e}')
+        return False, 0, 0, 0, 0, {}, []
+
     if raw is not None:
         r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases = _parse_remote_data(raw)
     else:

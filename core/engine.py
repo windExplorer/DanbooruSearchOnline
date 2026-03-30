@@ -494,58 +494,96 @@ class DanbooruTagger:
     # ── 关联推荐 ──────────────────────────────────────────────────────────
 
     def get_related(
-        self,
-        seed_tags: list[str],
-        exclude: set[str] | None = None,
-        limit: int = 20,
-        show_nsfw: bool = True,
+            self,
+            seed_tags: list[str],
+            exclude: set[str] | None = None,
+            limit: int = 20,
+            show_nsfw: bool = True,
     ) -> list:
         from .models import RelatedTag
+        import math
+
         if not self.cooc or not seed_tags:
             return []
         exclude = exclude or set()
-        scores: dict[str, int] = {}
+
+        # 估算语料库总大小 N，取数据集中发帖量的最大值，并设置合理下限
+        total_posts = float(max(self.df['post_count'].max(), 7000000.0))
+
+        npmi_scores: dict[str, float] = {}
+        total_cooc: dict[str, int] = {}
         tag_sources: dict[str, list[str]] = {}
+        name_to_idx = self._name_to_idx
+
         for seed in seed_tags:
+            if seed not in name_to_idx:
+                continue
+
+            seed_count = float(self.df.iloc[name_to_idx[seed]].get('post_count', 1) or 1)
+
             for neighbor, cnt in self.cooc.get(seed, []):
                 if neighbor in exclude or neighbor == seed:
                     continue
-                scores[neighbor] = scores.get(neighbor, 0) + cnt
+                if neighbor not in name_to_idx:
+                    continue
+
+                neighbor_count = float(self.df.iloc[name_to_idx[neighbor]].get('post_count', 1) or 1)
+
+                cooc = min(float(cnt), seed_count, neighbor_count)
+                if cooc <= 0:
+                    continue
+
+                # 计算分子：(Cooc * N) / (Count(A) * Count(B))
+                numerator = (cooc * total_posts) / (seed_count * neighbor_count)
+
+                # 忽略负相关或完全不相关的词条
+                if numerator <= 1.0:
+                    continue
+
+                pmi = math.log(numerator)
+
+                # 计算分母：-log(P(A, B))
+                p_a_b = cooc / total_posts
+                if p_a_b >= 1.0:
+                    npmi = 1.0
+                else:
+                    npmi = pmi / -math.log(p_a_b)
+
+                # 多词条搜索时累加 NPMI
+                npmi_scores[neighbor] = npmi_scores.get(neighbor, 0.0) + npmi
+                total_cooc[neighbor] = total_cooc.get(neighbor, 0) + cnt
                 tag_sources.setdefault(neighbor, []).append(seed)
-        if not scores:
+
+        if not npmi_scores:
             return []
 
-        name_to_idx = self._name_to_idx
-        normalized: dict[str, float] = {}
-        for tag_name, raw_score in scores.items():
-            if tag_name in name_to_idx:
-                post_count = float(self.df.iloc[name_to_idx[tag_name]].get('post_count', 1) or 1)
-                normalized[tag_name] = raw_score / (post_count ** 0.5)
-            else:
-                normalized[tag_name] = float(raw_score)
+        # 归一化用于前端展示
+        max_score = max(npmi_scores.values())
 
-        max_score = max(normalized.values())
-        sorted_candidates = sorted(normalized.items(), key=lambda x: x[1], reverse=True)
+        sorted_candidates = sorted(npmi_scores.items(), key=lambda x: x[1], reverse=True)
         results = []
-        for tag_name, norm_score in sorted_candidates:
+
+        for tag_name, raw_score in sorted_candidates:
             if len(results) >= limit:
                 break
-            if tag_name not in name_to_idx:
-                continue
-            row  = self.df.iloc[name_to_idx[tag_name]]
+
+            row = self.df.iloc[name_to_idx[tag_name]]
             nsfw = str(row.get('nsfw', '0'))
             if nsfw == '1' and not show_nsfw:
                 continue
+
             cat = CAT_MAP.get(str(row.get('category', '0')), 'Other')
+
             results.append(RelatedTag(
                 tag=tag_name,
                 cn_name=str(row.get('cn_name', '')),
                 category=cat,
                 nsfw=nsfw,
-                cooc_count=scores[tag_name],
-                cooc_score=round(norm_score / max_score, 4),
+                cooc_count=total_cooc[tag_name],
+                cooc_score=round(raw_score / max_score, 4),
                 sources=tag_sources.get(tag_name, []),
             ))
+
         return results
 
     def _load_cooc(self) -> None:

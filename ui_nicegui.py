@@ -483,10 +483,6 @@ class DanbooruSearchUI:
 
             asyncio.create_task(silent_counter_update())
 
-            ui.run_javascript(
-                f"if(typeof gtag !== 'undefined') gtag('event', 'search', {{'search_term': {_json.dumps(query)}}});"
-            )
-
             if not self._client_alive():
                 return
 

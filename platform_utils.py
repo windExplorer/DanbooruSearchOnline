@@ -179,14 +179,16 @@ def download_file(
 
 def read_bytes(filename: str, cfg: CounterConfig) -> Optional[bytes]:
     """
-    从 Hub repo 读取文件内容，返回 bytes；失败返回 None。
+    从 Hub repo 读取文件内容，返回 bytes。
+    若文件不存在返回 None；若发生网络或超时错误则抛出异常。
     """
     if not cfg.available:
         return None
 
     if cfg.platform == 'hf':
+        from huggingface_hub import hf_hub_download
+        from huggingface_hub.utils import EntryNotFoundError
         try:
-            from huggingface_hub import hf_hub_download
             path = hf_hub_download(
                 repo_id=cfg.repo_id,
                 repo_type='dataset',
@@ -195,13 +197,17 @@ def read_bytes(filename: str, cfg: CounterConfig) -> Optional[bytes]:
                 force_download=True,
             )
             return Path(path).read_bytes()
-        except Exception as e:
-            print(f'[platform_utils] HF 读取失败 ({filename}): {e}')
+        except EntryNotFoundError:
+            # 明确是文件不存在，返回 None
             return None
+        except Exception as e:
+            # 网络超时等异常，直接向上抛出
+            print(f'[platform_utils] HF 读取异常 ({filename}): {e}')
+            raise
 
     if cfg.platform == 'ms':
+        from modelscope.hub.file_download import model_file_download
         try:
-            from modelscope.hub.file_download import model_file_download
             path = model_file_download(
                 model_id=cfg.repo_id,
                 file_path=filename,
@@ -209,8 +215,11 @@ def read_bytes(filename: str, cfg: CounterConfig) -> Optional[bytes]:
             )
             return Path(path).read_bytes()
         except Exception as e:
-            print(f'[platform_utils] MS 读取失败 ({filename}): {e}')
-            return None
+            err_msg = str(e).lower()
+            if 'not found' in err_msg or '404' in err_msg:
+                return None
+            print(f'[platform_utils] MS 读取异常 ({filename}): {e}')
+            raise
 
     return None
 
