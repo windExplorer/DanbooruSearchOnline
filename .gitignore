@@ -2,7 +2,7 @@
 *.pyc
 core/__pychahce__
 __pychahce__
-my_model_bge_m3/
+my_model*/
 *.ignore
 tags_embedding/
 origin_database/

@@ -1,7 +1,7 @@
 """
 ui_nicegui.py
 ─────────────
-NiceGUI 前端层。
+NiceGUI 前端层（重构版）。
 
 ▸ 只负责渲染 / 交互。
 ▸ 调用 core.engine.DanbooruTagger，通过 core.models 的数据结构通信。
@@ -42,10 +42,9 @@ except Exception:
 
 # ── 表格列定义 ─────────────────────────────────────────────────────────────────
 
-BASE_COLUMNS = [
+TABLE_COLUMNS = [
     {'name': 'tag',         'label': '匹配标签', 'field': 'tag',         'align': 'left', 'sortable': True},
     {'name': 'cn_name',     'label': '含义',     'field': 'cn_name',     'align': 'left'},
-    {'name': 'category',    'label': '类型',     'field': 'category',    'align': 'left', 'sortable': True},
     {'name': 'nsfw',        'label': '分级',     'field': 'nsfw',        'align': 'center', 'sortable': True},
     {'name': 'final_score', 'label': '综合分',   'field': 'final_score', 'sortable': True},
     {'name': 'count',       'label': '热度',     'field': 'count',       'sortable': True},
@@ -57,6 +56,9 @@ OPTIONAL_COLS = {
     'source':   {'name': 'source',         'label': '匹配来源', 'field': 'source'},
 }
 
+
+# ── 辅助函数 ───────────────────────────────────────────────────────────────────
+
 def _get_git_commit() -> str:
     try:
         return subprocess.check_output(
@@ -67,10 +69,12 @@ def _get_git_commit() -> str:
     except Exception:
         return os.environ.get('COMMIT_SHA', 'unknown')[:7]
 
+
 def result_to_row(r, nsfw_visible: bool) -> dict:
     d = asdict(r)
     d['_nsfw_blocked'] = (r.nsfw == '1') and not nsfw_visible
     return d
+
 
 def apply_nsfw_filter(rows: list[dict], show_nsfw: bool) -> list[dict]:
     result = []
@@ -93,11 +97,11 @@ class DanbooruSearchUI:
         self.full_tags_str: str = ""
         self.full_tags_str_sfw: str = ""
 
-        self.result_table = None
-        self.all_result_area = None
+        self.result_table = None           # 左栏表格
+        self.related_list_container = None  # 右栏关联推荐列表
+        self.results_section = None        # 整个结果区域（搜索前隐藏）
         self.selection_count_label = None
         self.selected_display = None
-        self.related_container = None
         self.current_related: list = []
         self.chip_extra_selected: set = set()
 
@@ -107,9 +111,6 @@ class DanbooruSearchUI:
         self.input_weight = None
         self.input_nsfw = None
         self.input_segment = None
-        self.sw_semantic = None
-        self.sw_layer = None
-        self.sw_source = None
         self.search_input = None
         self.keywords_container = None
         self.spinner = None
@@ -119,6 +120,14 @@ class DanbooruSearchUI:
         self.selected_cats = {'General': True, 'Copyright': True, 'Character': True}
 
         self.bad_case_btn = None
+
+        # 表格显示选项开关
+        self.sw_semantic = None
+        self.sw_layer = None
+        self.sw_source = None
+
+        # 关联推荐的 checkbox 引用
+        self._related_checkboxes: dict[str, ui.checkbox] = {}
 
     def _update_footer_text(self):
         if self.search_count_label is not None:
@@ -147,6 +156,10 @@ class DanbooruSearchUI:
                     pass
             asyncio.create_task(silent_success_update())
 
+    # ══════════════════════════════════════════════════════════════════════
+    # 页面构建
+    # ══════════════════════════════════════════════════════════════════════
+
     def build_page(self):
         ui.colors(primary='#4A90E2', secondary='#5E6C84', accent='#FF6B6B')
         ui.add_head_html('''
@@ -159,6 +172,42 @@ class DanbooruSearchUI:
                                        pointer-events: none !important; user-select: none !important; }
                 .nsfw-checkbox-disabled { pointer-events: none !important; opacity: 0.3 !important; }
                 .nsfw-row-blocked    { cursor: not-allowed !important; }
+                .related-item { transition: background-color 0.15s ease; }
+                .related-item:hover { background-color: rgba(74, 144, 226, 0.04); }
+                .tag-link { text-decoration: none; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; }
+                .tag-link:hover { text-decoration: underline; }
+
+                /* 强制双栏并排 */
+                .two-col-layout {
+                    display: flex !important;
+                    flex-wrap: nowrap !important;
+                    align-items: flex-start !important;
+                    gap: 16px !important;
+                }
+                .two-col-layout > .col-left {
+                    flex: 0 0 62% !important;
+                    min-width: 0 !important;
+                    max-width: 62% !important;
+                    overflow: hidden;
+                }
+                .two-col-layout > .col-right {
+                    flex: 0 0 36% !important;
+                    min-width: 0 !important;
+                    max-width: 36% !important;
+                    overflow: hidden;
+                }
+
+                /* 窄屏回退为上下排列 */
+                @media (max-width: 900px) {
+                    .two-col-layout {
+                        flex-wrap: wrap !important;
+                    }
+                    .two-col-layout > .col-left,
+                    .two-col-layout > .col-right {
+                        flex: 1 1 100% !important;
+                        max-width: 100% !important;
+                    }
+                }
             </style>
             <script async src="https://www.googletagmanager.com/gtag/js?id=G-QPB7EEPR5G"></script>
             <script>
@@ -187,19 +236,49 @@ class DanbooruSearchUI:
             </script>
         ''')
 
-        self.init_banner = ui.card().classes(
-            'w-full max-w-6xl mx-auto bg-blue-50 border-l-4 border-blue-400 mb-2'
-        )
-        with self.init_banner:
-            with ui.row().classes('items-center gap-3 p-2'):
-                ui.spinner(size='sm')
-                ui.label('引擎初始化中，请稍候…首次加载约需 15 秒').classes('text-sm text-blue-700')
-        self.init_banner.set_visibility(not DanbooruTagger.is_ready())
+        with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
 
-        if not DanbooruTagger.is_ready():
-            asyncio.ensure_future(self._hide_banner_when_ready())
+            # ── 初始化提示 ──
+            self.init_banner = ui.card().classes(
+                'w-full bg-blue-50 border-l-4 border-blue-400'
+            )
+            with self.init_banner:
+                with ui.row().classes('items-center gap-3 p-2'):
+                    ui.spinner(size='sm')
+                    ui.label('引擎初始化中，请稍候…首次加载约需 15 秒').classes('text-sm text-blue-700')
+            self.init_banner.set_visibility(not DanbooruTagger.is_ready())
+            if not DanbooruTagger.is_ready():
+                asyncio.ensure_future(self._hide_banner_when_ready())
 
-        with ui.card().classes('w-full max-w-6xl mx-auto bg-orange-50 border-l-4 border-orange-500 mb-2 p-0 overflow-hidden'):
+            # ── 1. 注意事项 ──
+            self._build_notice()
+
+            # ── 2. 搜索卡片 ──
+            self._build_search_card()
+
+            # ── 3~5. 结果区域（搜索前隐藏）──
+            self.results_section = ui.column().classes('w-full gap-4')
+            self.results_section.set_visibility(False)
+
+            with self.results_section:
+                # ── 3. 已选标签栏 ──
+                self._build_selection_bar()
+
+                # ── 4. 分词筛选 chips ──
+                self.keywords_container = ui.row().classes('gap-2 items-center flex-wrap')
+
+                # ── 5. 两栏结果 ──
+                self._build_results_columns()
+
+            # ── 6. 底部 ──
+            with ui.element('div').classes('w-full text-center py-4 mt-2'):
+                self.search_count_label = ui.html('正在加载数据...').classes('text-xs text-gray-400')
+                self._update_footer_text()
+
+    # ── 注意事项 ──────────────────────────────────────────────────────────
+
+    def _build_notice(self):
+        with ui.card().classes('w-full bg-orange-50 border-l-4 border-orange-500 p-0 overflow-hidden'):
             with ui.expansion(value=True).classes('w-full') as notice_expansion:
                 notice_expansion.add_slot('header', '''
                     <div class="flex items-center gap-2 px-4 py-2 w-full flex-wrap">
@@ -221,190 +300,310 @@ class DanbooruSearchUI:
 - **支持作者**：如果觉得好用，请点击顶部给本 Space 点个 **Like ❤️**，或前往 GitHub 点个 **Star ⭐**！
 """).classes('text-sm text-gray-800 px-4 pb-3')
 
-        with ui.column().classes('w-full max-w-6xl mx-auto p-4 gap-6'):
-            with ui.row().classes('items-center gap-2'):
+    # ── 搜索卡片 ─────────────────────────────────────────────────────────
+
+    def _build_search_card(self):
+        with ui.card().classes('w-full'):
+            with ui.row().classes('items-center gap-2 mb-2'):
                 ui.icon('search', size='2em', color='primary')
                 ui.label('Danbooru 标签模糊搜索').classes('text-2xl font-bold text-gray-800')
+            ui.label('基于语义匹配的标签搜索引擎，支持多维匹配与共现关联推荐。').classes(
+                'text-sm text-gray-500 -mt-1 mb-3'
+            )
 
-            with ui.card().classes('w-full'):
-                with ui.grid(columns=4).classes('w-full gap-8 items-center'):
-                    self.input_top_k = ui.number('Top K (语义相关)', value=5, min=1, max=50) \
-                        .props('outlined dense suffix="个"').classes('w-full')
-                    self.input_limit = ui.number('结果上限', value=80, min=10, max=500) \
-                        .props('outlined dense suffix="个"').classes('w-full')
-                    with ui.column().classes('gap-0'):
-                        with ui.row().classes('w-full justify-between'):
-                            ui.label('热度权重').classes('text-xs text-gray-500')
-                            self.input_weight = ui.slider(min=0.0, max=1.0, value=0.15, step=0.05).classes('w-full')
-                            ui.label().bind_text_from(self.input_weight, 'value', lambda v: f"{v:.2f}")
-                    self.input_nsfw = ui.switch('显示 NSFW', value=False).props('color=red').classes('w-full')
+            with ui.row().classes('w-full gap-3 items-stretch'):
+                self.search_input = ui.textarea(
+                    placeholder='输入自然语言描述或模糊概念，例如：一个穿着白色水手服的少女在雨中奔跑...'
+                ).classes('flex-grow text-base').props('outlined rows=2')
+                self.search_input.on('keydown.ctrl.enter', self.perform_search)
+
+                with ui.column().classes('justify-center'):
+                    self.search_btn = ui.button(
+                        '', on_click=self.perform_search, icon='search'
+                    ).classes('px-6 h-full min-h-16').props('unelevated color=dark')
+                    with self.search_btn:
+                        ui.label('搜索').classes('text-sm mt-1')
+                    self.spinner = ui.spinner(size='2em').classes('hidden')
+
+            with ui.row().classes('w-full gap-6 items-center mt-3 flex-wrap'):
+                with ui.row().classes('items-center gap-2'):
+                    ui.label('Top K (语义相关)').classes('text-sm text-gray-600')
+                    self.input_top_k = ui.number(value=5, min=1, max=50).classes('w-20') \
+                        .props('outlined dense')
+
+                with ui.row().classes('items-center gap-2'):
+                    ui.label('结果上限').classes('text-sm text-gray-600')
+                    self.input_limit = ui.number(value=80, min=10, max=500).classes('w-20') \
+                        .props('outlined dense')
+
+                with ui.row().classes('items-center gap-2'):
+                    ui.label('热度权重').classes('text-sm text-gray-600')
+                    self.input_weight = ui.slider(min=0.0, max=1.0, value=0.15, step=0.05).classes('w-32')
+                    ui.label().bind_text_from(self.input_weight, 'value', lambda v: f"{v:.2f}") \
+                        .classes('text-sm font-mono text-gray-700 w-8')
+
+                with ui.switch('显示 NSFW 内容', value=False).props('color=red') as _nsfw_sw:
                     if not nsfw_allowed():
-                        self.input_nsfw.disable()
-                        self.input_nsfw.tooltip('NSFW 内容在当前平台不可用')
-                    else:
-                        self.input_nsfw.on('update:model-value', self.on_nsfw_toggle)
+                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                            ui.label('NSFW 内容在当前平台不可用').style('font-size:14px;')
+                self.input_nsfw = _nsfw_sw
+                if not nsfw_allowed():
+                    self.input_nsfw.disable()
+                else:
+                    self.input_nsfw.on('update:model-value', self.on_nsfw_toggle)
 
-            with ui.expansion('高级设置 (Advanced Settings)', icon='tune').classes('w-full bg-gray-50 border rounded-lg'):
-                with ui.column().classes('w-full p-4 gap-4'):
-                    self.input_segment = ui.switch('启用智能分词 (Segmentation)', value=True).props('color=primary')
-                    ui.label('关闭后系统将只匹配完整句子，适用于精准搜索整句。').classes('text-xs text-gray-500 -mt-2 ml-10')
-                    ui.separator()
+                with ui.switch('智能分词', value=True).props('color=primary') as _seg_sw:
+                    with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                        ui.label('关闭后系统将只匹配完整句子，适用于精准搜索整句。').style('font-size:14px;')
+                self.input_segment = _seg_sw
 
-                    ui.label('匹配层筛选 (Target Layers):').classes('font-bold text-gray-700')
-                    layer_options = ['英文', '中文扩展词', '释义', '中文核心词']
-                    with ui.row().classes('gap-4'):
-                        for layer in layer_options:
-                            ui.checkbox(layer, value=True,
-                                        on_change=lambda e, l=layer: self.selected_layers.__setitem__(l, e.value))
+            with ui.expansion('高级选项', icon='tune').classes('w-full mt-2'):
+                with ui.column().classes('w-full p-3 gap-4'):
+                    with ui.row().classes('w-full gap-8 flex-wrap'):
+                        with ui.column().classes('gap-2'):
+                            ui.label('匹配层筛选').classes('font-bold text-sm text-gray-700')
+                            display_map = {
+                                '英文': '英文标签', '中文扩展词': '中文扩展词',
+                                '释义': '维基释义', '中文核心词': '中文核心词',
+                            }
+                            for layer in ['英文', '中文扩展词', '释义', '中文核心词']:
+                                ui.checkbox(
+                                    display_map.get(layer, layer), value=True,
+                                    on_change=lambda e, l=layer: self.selected_layers.__setitem__(l, e.value)
+                                ).props('color=primary dense')
 
-                    ui.separator()
-                    ui.label('标签类型筛选 (Categories):').classes('font-bold text-gray-700')
-                    cat_options = ['General', 'Copyright', 'Character']
-                    color_map = {'General': 'blue', 'Copyright': 'pink', 'Character': 'green'}
-                    with ui.row().classes('gap-4 flex-wrap'):
-                        for cat in cat_options:
-                            ui.checkbox(cat, value=True,
-                                        on_change=lambda e, c=cat: self.selected_cats.__setitem__(c, e.value)) \
-                                .props(f'color={color_map.get(cat, "primary")}')
+                        with ui.column().classes('gap-2'):
+                            ui.label('类型筛选').classes('font-bold text-sm text-gray-700')
+                            color_map = {'General': 'blue', 'Copyright': 'pink', 'Character': 'green'}
+                            label_map = {
+                                'General': '通用 (General)',
+                                'Copyright': '作品 (Copyright)',
+                                'Character': '角色 (Character)',
+                            }
+                            for cat in ['General', 'Copyright', 'Character']:
+                                ui.checkbox(
+                                    label_map[cat], value=True,
+                                    on_change=lambda e, c=cat: self.selected_cats.__setitem__(c, e.value)
+                                ).props(f'color={color_map[cat]} dense')
 
-                    ui.separator()
-                    ui.label('表格显示选项 (Display Options):').classes('font-bold text-gray-700')
-                    self.sw_semantic = ui.switch('显示语义分', value=False)
-                    self.sw_layer    = ui.switch('显示匹配层', value=False)
-                    self.sw_source   = ui.switch('显示匹配来源', value=False)
-                    self.sw_semantic.on('update:model-value', self.update_table_columns)
-                    self.sw_layer.on('update:model-value', self.update_table_columns)
-                    self.sw_source.on('update:model-value', self.update_table_columns)
+                        with ui.column().classes('gap-2'):
+                            ui.label('表格显示列').classes('font-bold text-sm text-gray-700')
+                            self.sw_semantic = ui.switch('显示语义分', value=False)
+                            self.sw_layer    = ui.switch('显示匹配层', value=False)
+                            self.sw_source   = ui.switch('显示匹配来源', value=False)
+                            self.sw_semantic.on('update:model-value', self._update_table_columns)
+                            self.sw_layer.on('update:model-value', self._update_table_columns)
+                            self.sw_source.on('update:model-value', self._update_table_columns)
 
-            with ui.card().classes('w-full p-0 overflow-hidden'):
-                with ui.column().classes('w-full p-6 gap-4'):
-                    ui.label('画面描述').classes('text-lg font-bold text-gray-700')
-                    self.search_input = ui.textarea(
-                        placeholder='例如：一个穿着白色水手服的女孩在雨中奔跑'
-                    ).classes('w-full text-lg').props('outlined rows=3')
+    # ── 已选标签栏 ────────────────────────────────────────────────────────
 
-                    self.keywords_container = ui.row().classes('gap-2 items-center')
+    def _build_selection_bar(self):
+        with ui.card().classes('w-full bg-blue-50 border border-blue-200'):
+            with ui.row().classes('w-full items-center justify-between'):
+                with ui.row().classes('items-center gap-2'):
+                    ui.icon('check_circle', color='primary')
+                    ui.label('已选标签').classes('font-bold text-primary')
+                    self.selection_count_label = ui.label('0').classes(
+                        'bg-primary text-white px-2 rounded-full text-sm')
 
-                    with ui.row().classes('w-full justify-end items-center gap-4'):
-                        self.spinner = ui.spinner(size='2em').classes('hidden')
-                        self.search_btn = ui.button('开始搜索', on_click=self.perform_search, icon='search')
-                        self.search_btn.classes('px-8 py-2 text-lg').props('unelevated color=primary')
+                with ui.row().classes('items-center gap-2'):
+                    with ui.button('没搜到？', icon='help_outline').props('dense flat color=grey-6').classes('text-sm') as _bad_btn:
+                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                            ui.html('点击此处以反馈失败案例。<br>您的搜索词将被匿名收集用于优化引擎（不包含个人隐私）。').style('font-size:14px;line-height:1.5;')
+                    self.bad_case_btn = _bad_btn
+                    self.bad_case_btn.disable()
+                    self.bad_case_btn.on_click(self.report_bad_case)
+                    copy_btn = ui.button('复制选中', icon='content_copy').props('dense unelevated color=primary')
+                    copy_btn.on_click(self.copy_selection)
 
-                    self.search_input.on('keydown.ctrl.enter', self.perform_search)
+            self.selected_display = ui.textarea().classes('w-full mt-2') \
+                .props('outlined dense rows=2 readonly bg-white')
 
-            with ui.row().classes('w-full gap-6'):
-                with ui.card().classes('w-1/3 flex-grow'):
-                    ui.label('推荐 Prompt (全部)').classes('font-bold text-gray-600')
-                    self.all_result_area = ui.textarea().classes('w-full h-full bg-gray-50') \
-                        .props('readonly outlined input-class=text-sm')
+    # ── 两栏结果（CSS 强制并排）──────────────────────────────────────────
 
-                with ui.column().classes('w-2/3 flex-grow'):
-                    with ui.card().classes('w-full bg-blue-50 border-blue-200 border'):
-                        with ui.row().classes('w-full items-center justify-between'):
-                            with ui.row().classes('items-center gap-2'):
-                                ui.icon('check_circle', color='primary')
-                                ui.label('已选标签:').classes('font-bold text-primary')
-                                self.selection_count_label = ui.label('0').classes(
-                                    'bg-primary text-white px-2 rounded-full text-sm')
-                            with ui.row().classes('items-center gap-2'):
-                                self.bad_case_btn = ui.button(
-                                    '没搜到？', icon='help_outline',
-                                ).props('dense flat color=grey-6').classes('text-sm')
-                                self.bad_case_btn.tooltip(
-                                    '点击此处以反馈失败案例。\n'
-                                    '您的搜索词将被匿名收集用于优化引擎（不包含个人隐私）。'
-                                )
-                                self.bad_case_btn.disable()
-                                self.bad_case_btn.on_click(self.report_bad_case)
-                                copy_btn = ui.button('复制选中', icon='content_copy').props('dense unelevated color=primary')
-                                copy_btn.on_click(self.copy_selection)
+    def _build_results_columns(self):
+        with ui.element('div').classes('w-full two-col-layout'):
+            # ── 左栏：语义匹配结果（表格）──
+            with ui.card().classes('col-left'):
+                with ui.row().classes('items-center justify-between mb-2'):
+                    ui.label('匹配标签结果').classes('font-bold text-lg text-gray-800')
+                    ui.button('复制全部标签', icon='content_copy', on_click=self._copy_all_tags) \
+                        .props('dense flat color=primary').classes('text-sm')
 
-                        self.selected_display = ui.textarea().classes('w-full mt-2') \
-                            .props('outlined dense rows=2 readonly bg-white')
+                self.result_table = ui.table(
+                    columns=TABLE_COLUMNS,
+                    rows=[],
+                    pagination=10,
+                    selection='multiple',
+                    row_key='tag',
+                ).classes('w-full')
+                self.result_table.on('selection', self._update_selection_display)
+                self.result_table.on('link_click', self._mark_interaction)
 
-                    with ui.expansion(
-                        '关联推荐',
-                        icon='auto_awesome',
-                        value=True,
-                    ).classes('w-full bg-purple-50 border border-purple-200 rounded-lg mt-2'):
-                        with ui.column().classes('w-full p-3 gap-2'):
-                            ui.label(
-                                '基于标签共现数据，为您推荐更多可能的标签。勾选结果行后自动更新；点击标签可加入或移出已选。'
-                            ).classes('text-xs text-gray-500')
-                            self.related_container = ui.row().classes('gap-2 flex-wrap items-center min-h-8')
-                            with self.related_container:
-                                ui.label('请先搜索…').classes('text-xs text-gray-400 italic')
+                # 自定义行模板：行背景色按分类，整行悬浮显示 wiki（NSFW模糊行除外）
+                self.result_table.add_slot('body', r'''
+                    <q-tr :props="props"
+                          :class="props.row._nsfw_blocked ? 'nsfw-row-blocked' : ''"
+                          :style="{
+                              'background-color':
+                                  props.row.category === 'General'   ? 'rgba(59,130,246,0.06)' :
+                                  props.row.category === 'Character' ? 'rgba(34,197,94,0.06)'  :
+                                  props.row.category === 'Copyright' ? 'rgba(236,72,153,0.06)' : ''
+                          }">
+                        <q-td auto-width>
+                            <q-checkbox v-model="props.selected"
+                                :class="props.row._nsfw_blocked ? 'nsfw-checkbox-disabled' : ''"/>
+                        </q-td>
+                        <q-td v-for="col in props.cols" :key="col.name" :props="props">
+                            <template v-if="col.name === 'tag' || col.name === 'cn_name'">
+                                <div :class="props.row._nsfw_blocked ? 'nsfw-blur-cell' : ''">
+                                    <template v-if="col.name === 'cn_name' && col.value">
+                                        <span style="font-size:14px">
+                                            {{ col.value.split(',')[0] }}
+                                        </span>
+                                    </template>
+                                    <template v-else-if="col.name === 'tag'">
+                                        <a :href="'https://danbooru.donmai.us/wiki_pages/'+col.value"
+                                           target="_blank"
+                                           class="text-primary hover:underline font-bold inline-flex items-center"
+                                           style="text-decoration:none; font-family: Consolas, Monaco, Courier New, monospace;"
+                                           @click.stop="$emit('link_click', col.value)">
+                                            {{ col.value }}
+                                            <q-icon name="open_in_new" size="xs" class="q-ml-xs opacity-50"/>
+                                        </a>
+                                    </template>
+                                    <template v-else>{{ col.value }}</template>
+                                </div>
+                            </template>
+                            <template v-else-if="col.name === 'nsfw'">
+                                <div v-if="col.value === '1'" class="text-red-500">🔴</div>
+                                <div v-else class="text-green-500">🟢</div>
+                            </template>
+                            <template v-else-if="col.name === 'final_score'">
+                                <q-badge :color="col.value > 0.6 ? 'green' : (col.value > 0.5 ? 'teal' : 'orange')">
+                                    {{ col.value }}
+                                </q-badge>
+                            </template>
+                            <template v-else>{{ col.value }}</template>
+                        </q-td>
+                        <!-- 整行 wiki tooltip（NSFW 模糊行不显示） -->
+                        <q-tooltip v-if="props.row.wiki && !props.row._nsfw_blocked"
+                            content-class="bg-black text-white shadow-4"
+                            max-width="500px" :offset="[10,10]">
+                            <div style="font-size:14px;line-height:1.5;">
+                                <span style="opacity:0.7;margin-right:4px;">{{
+                                    props.row.category === 'General'   ? '[通用]' :
+                                    props.row.category === 'Character' ? '[角色]' :
+                                    props.row.category === 'Copyright' ? '[作品]' : ''
+                                }}</span>{{ props.row.wiki }}
+                            </div>
+                        </q-tooltip>
+                    </q-tr>
+                ''')
 
-                    self.result_table = ui.table(
-                        columns=BASE_COLUMNS,
-                        rows=[],
-                        pagination=10,
-                        selection='multiple',
-                        row_key='tag',
-                    ).classes('w-full')
-                    self.result_table.on('selection', self._update_selection_display)
-                    self.result_table.on('link_click', self._mark_interaction)
+            # ── 右栏：关联推荐 ──
+            with ui.card().classes('col-right'):
+                with ui.row().classes('items-center gap-2 mb-2'):
+                    ui.label('关联推荐').classes('font-bold text-lg text-gray-800')
+                    with ui.icon('info_outline', size='sm', color='grey').classes('cursor-help'):
+                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                            ui.html('基于标签共现数据，发掘语义之外的相关性，为您推荐更多可能的标签。<br>勾选结果行后自动更新；勾选可加入或移出已选。').style('font-size:14px;line-height:1.5;')
 
-                    self.result_table.add_slot('body', '''
-                        <q-tr :props="props" :class="props.row._nsfw_blocked ? 'nsfw-row-blocked' : ''">
-                            <q-td auto-width>
-                                <q-checkbox v-model="props.selected"
-                                    :class="props.row._nsfw_blocked ? 'nsfw-checkbox-disabled' : ''"/>
-                            </q-td>
-                            <q-td v-for="col in props.cols" :key="col.name" :props="props">
-                                <template v-if="col.name === 'tag' || col.name === 'cn_name'">
-                                    <div :class="props.row._nsfw_blocked ? 'nsfw-blur-cell' : ''">
-                                        <template v-if="col.name === 'cn_name' && col.value">
-                                            <q-badge v-for="(item, index) in col.value.split(',')" :key="index"
-                                                :color="index === 0 ? 'black' : 'grey'" outline
-                                                style="font-size:14px" class="q-mr-xs q-mb-xs cursor-help">
-                                                {{ item }}
-                                            </q-badge>
-                                            <q-tooltip v-if="props.row.wiki"
-                                                content-class="bg-black text-white shadow-4"
-                                                max-width="500px" :offset="[10,10]">
-                                                <div style="font-size:14px;line-height:1.5;">{{ props.row.wiki }}</div>
-                                            </q-tooltip>
-                                        </template>
-                                        <template v-else-if="col.name === 'tag'">
-                                            <a :href="'https://danbooru.donmai.us/wiki_pages/'+col.value"
-                                               target="_blank"
-                                               class="text-primary hover:underline font-bold inline-flex items-center"
-                                               style="text-decoration:none;" @click.stop="$emit('link_click', col.value)">
-                                                {{ col.value }}
-                                                <q-icon name="open_in_new" size="xs" class="q-ml-xs opacity-50"/>
-                                            </a>
-                                        </template>
-                                        <template v-else>{{ col.value }}</template>
-                                    </div>
-                                </template>
-                                <template v-else-if="col.name === 'nsfw'">
-                                    <div v-if="col.value === '1'" class="text-red-500">🔴</div>
-                                    <div v-else class="text-green-500">🟢</div>
-                                </template>
-                                <template v-else-if="col.name === 'final_score'">
-                                    <q-badge :color="col.value > 0.6 ? 'green' : (col.value > 0.5 ? 'teal' : 'orange')">
-                                        {{ col.value }}
-                                    </q-badge>
-                                </template>
-                                <template v-else-if="col.name === 'category'">
-                                    <q-badge :color="
-                                        col.value === 'General'   ? 'blue'  :
-                                        (col.value === 'Character' ? 'green' :
-                                        (col.value === 'Copyright' ? 'pink'  : 'red'))" outline>
-                                        {{ col.value }}
-                                    </q-badge>
-                                </template>
-                                <template v-else>{{ col.value }}</template>
-                            </q-td>
-                        </q-tr>
-                    ''')
+                self.related_list_container = ui.column().classes('w-full gap-0')
+                with self.related_list_container:
+                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
-        with ui.element('div').classes('w-full text-center py-4 mt-2'):
-            self.search_count_label = ui.html('正在加载数据...').classes('text-xs text-gray-400')
-            self._update_footer_text()
+    # ══════════════════════════════════════════════════════════════════════
+    # 渲染关联推荐列表
+    # ══════════════════════════════════════════════════════════════════════
 
-    # ── 交互逻辑 ──────────────────────────────────────────────────────────────
+    def _render_related_list(self, related: list, show_nsfw: bool):
+        self.related_list_container.clear()
+        self._related_checkboxes.clear()
+
+        filtered = [r for r in related if not (r.nsfw == '1' and not show_nsfw)]
+        if not filtered:
+            with self.related_list_container:
+                ui.label('暂无推荐').classes('text-sm text-gray-400 italic p-4')
+            return
+
+        selected_now = set(self._get_selected_tags())
+
+        with self.related_list_container:
+            for r in filtered:
+                tag = r.tag
+                cn_first = r.cn_name.split(',')[0].strip() if r.cn_name else ''
+                is_selected = tag in selected_now
+                score_pct = f'+{r.cooc_score * 100:.0f}%'
+
+                # 获取 wiki
+                wiki_text = ''
+                try:
+                    tagger = DanbooruTagger._instance
+                    if tagger and tagger.df is not None and tag in tagger._name_to_idx:
+                        idx = tagger._name_to_idx[tag]
+                        wiki_text = str(tagger.df.iloc[idx].get('wiki', ''))
+                except Exception:
+                    pass
+
+                sources_str = '、'.join(r.sources) if r.sources else '—'
+                CAT_LABEL = {'General': '通用', 'Character': '角色', 'Copyright': '作品'}
+                cat_label = CAT_LABEL.get(r.category, '')
+                tooltip_html = ''
+                if wiki_text:
+                    prefix = f'<span style="opacity:0.7;margin-right:4px;">[{cat_label}] </span>' if cat_label else ''
+                    tooltip_html += f'<div style="margin-bottom:6px;">{prefix}{wiki_text}</div>'
+                tooltip_html += (
+                    f'<div style="opacity:0.85;">'
+                    f'{r.cn_name}<br>'
+                    f'共现: {r.cooc_count:,}  相关度: {r.cooc_score:.2f}<br>'
+                    f'来自选中: {sources_str}'
+                    f'</div>'
+                )
+
+                # 行背景色按分类区分
+                CAT_BG = {
+                    'General':   'background-color: rgba(59,130,246,0.06);',   # 淡蓝
+                    'Character': 'background-color: rgba(34,197,94,0.06);',    # 淡绿
+                    'Copyright': 'background-color: rgba(236,72,153,0.06);',   # 淡红/粉
+                }
+                row_bg = CAT_BG.get(r.category, '')
+
+                # 整行容器，tooltip 挂在行上
+                with ui.row().classes(
+                    'w-full items-center gap-2 px-3 py-2 related-item border-b border-gray-100'
+                ).style(row_bg):
+                    # 整行 wiki tooltip
+                    if tooltip_html:
+                        with ui.tooltip().props('content-class="bg-black text-white shadow-4" max-width="500px"'):
+                            ui.html(tooltip_html).style('font-size:14px;line-height:1.5;max-width:480px;')
+
+                    # Checkbox
+                    cb = ui.checkbox(
+                        '', value=is_selected,
+                        on_change=lambda e, t=tag: self._on_related_checkbox_change(t, e.value)
+                    ).props('dense')
+                    self._related_checkboxes[tag] = cb
+
+                    # 标签名（可点击跳转）+ 中文名
+                    with ui.column().classes('flex-grow gap-0 min-w-0'):
+                        link = ui.link(
+                            tag,
+                            f'https://danbooru.donmai.us/wiki_pages/{tag}',
+                            new_tab=True
+                        ).classes('tag-link text-primary font-bold text-xs')
+                        link.on('click', self._mark_interaction)
+
+                        if cn_first:
+                            ui.label(cn_first).classes('text-xs text-gray-500 truncate')
+
+                    # 关联分数
+                    score_color = 'green' if r.cooc_score > 0.6 else ('teal' if r.cooc_score > 0.3 else 'grey')
+                    ui.label(score_pct).classes(f'text-sm font-bold text-{score_color}-600 whitespace-nowrap')
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 交互逻辑
+    # ══════════════════════════════════════════════════════════════════════
 
     async def _hide_banner_when_ready(self):
         while not DanbooruTagger.is_ready():
@@ -419,10 +618,16 @@ class DanbooruSearchUI:
         except RuntimeError:
             return False
 
-    def filter_table_by_source(self, keyword: str):
-        filtered = (self.full_table_data if (not keyword or keyword == 'ALL')
-                    else [r for r in self.full_table_data if r['source'] == keyword])
-        self.result_table.rows = apply_nsfw_filter(filtered, self.input_nsfw.value)
+    # ── 分词筛选 ──────────────────────────────────────────────────────────
+
+    def _filter_by_source(self, keyword: str):
+        show_nsfw_val = self.input_nsfw.value
+        if not keyword or keyword == 'ALL':
+            filtered = self.full_table_data
+        else:
+            filtered = [r for r in self.full_table_data if r['source'] == keyword]
+
+        self.result_table.rows = apply_nsfw_filter(filtered, show_nsfw_val)
 
         for child in self.keywords_container.default_slot.children:
             if isinstance(child, ui.chip):
@@ -431,10 +636,11 @@ class DanbooruSearchUI:
                     or (keyword == self.current_query_str and child.text == '整句')
                     or (child.text == keyword)
                 )
-                child.props(
-                    f'color={"primary" if selected else "grey-4"} '
-                    f'text-color={"white" if selected else "black"}'
-                )
+                chip_color = 'primary' if selected else 'grey-4'
+                text_color = 'white' if selected else 'black'
+                child.props(f'color={chip_color} text-color={text_color}')
+
+    # ── 搜索 ──────────────────────────────────────────────────────────────
 
     async def perform_search(self):
         query = self.search_input.value.strip()
@@ -460,18 +666,23 @@ class DanbooruSearchUI:
 
         try:
             tagger = await DanbooruTagger.get_instance()
+
+            # NSFW 保护模式：开 = 不显示 NSFW
+            show_nsfw_val = self.input_nsfw.value
+
             request = SearchRequest(
                 query=query,
                 top_k=int(self.input_top_k.value),
                 limit=int(self.input_limit.value),
                 popularity_weight=float(self.input_weight.value),
-                show_nsfw=self.input_nsfw.value,
-                use_segmentation=self.input_segment.value,
+                show_nsfw=show_nsfw_val,
+                use_segmentation=self.input_segment.value if self.input_segment else True,
                 target_layers=target_layers_list,
                 target_categories=target_cats_list,
             )
             response = await run.io_bound(tagger.search, request)
 
+            # 后台计数
             async def silent_counter_update():
                 try:
                     await counter.increment()
@@ -480,44 +691,46 @@ class DanbooruSearchUI:
                     self._update_footer_text()
                 except Exception as e:
                     print(f"[Counter Error] 后台静默更新计数失败: {e}", flush=True)
-
             asyncio.create_task(silent_counter_update())
 
             if not self._client_alive():
                 return
 
-            table_data = [result_to_row(r, self.input_nsfw.value) for r in response.results]
+            table_data = [result_to_row(r, show_nsfw_val) for r in response.results]
             self.full_table_data = table_data
             self.full_tags_str = response.tags_all
             self.full_tags_str_sfw = response.tags_sfw
 
-            self.all_result_area.value = (
-                response.tags_sfw if not self.input_nsfw.value else response.tags_all
-            )
-            self.result_table.rows = apply_nsfw_filter(table_data, self.input_nsfw.value)
+            # 显示结果区域
+            self.results_section.set_visibility(True)
+
+            # 填充表格
+            self.result_table.rows = apply_nsfw_filter(table_data, show_nsfw_val)
             self.result_table.selected = []
             self._update_selection_display(None)
 
-            self._refresh_related([], self.input_nsfw.value)
+            # 清空关联推荐
+            self._refresh_related([], show_nsfw_val)
 
+            # 分词筛选 chips
             self.keywords_container.clear()
             with self.keywords_container:
                 ui.label('分词筛选:').classes('text-sm text-gray-500 font-bold mr-2')
-                ui.chip('全部', on_click=lambda: self.filter_table_by_source('ALL')) \
+                ui.chip('全部', on_click=lambda: self._filter_by_source('ALL')) \
                     .props('color=primary text-color=white clickable')
-                if self.input_segment.value:
+                use_seg = self.input_segment.value if self.input_segment else True
+                if use_seg:
                     ui.chip('整句',
-                            on_click=lambda: self.filter_table_by_source(self.current_query_str)) \
+                            on_click=lambda: self._filter_by_source(self.current_query_str)) \
                         .props('color=grey-4 text-color=black clickable')
                     for kw in response.keywords:
                         ui.chip(kw,
-                                on_click=lambda k=kw: self.filter_table_by_source(k)) \
+                                on_click=lambda k=kw: self._filter_by_source(k)) \
                             .props('color=grey-4 text-color=black clickable')
                 else:
                     ui.label('(分词已关闭)').classes('text-xs text-gray-400')
 
             ui.notify(f'找到 {len(table_data)} 个标签', type='positive')
-
             self.current_search_interacted = False
 
             if self.bad_case_btn is not None:
@@ -542,33 +755,7 @@ class DanbooruSearchUI:
             except RuntimeError:
                 pass
 
-    def copy_selection(self):
-        self._mark_interaction()
-        ui.clipboard.write(self.selected_display.value)
-        ui.notify('已复制选中标签!', type='positive')
-
-        async def silent_copy_update():
-            try:
-                await counter.increment_copy()
-            except Exception:
-                pass
-        asyncio.create_task(silent_copy_update())
-
-    async def report_bad_case(self):
-        query = self.current_query_str.strip()
-        if len(query) <= 1:
-            ui.notify('搜索词太短，无法提交反馈。', type='warning', timeout=2000)
-            return
-        if self.bad_case_btn is not None:
-            self.bad_case_btn.disable()
-        try:
-            await counter.add_bad_case(query)
-            ui.notify('感谢反馈！我们会持续优化。', type='positive', timeout=3000)
-        except Exception as e:
-            print(f'[UI] bad_case 记录异常: {e}')
-            ui.notify('记录失败，请稍后再试。', type='warning', timeout=3000)
-            if self.bad_case_btn is not None:
-                self.bad_case_btn.enable()
+    # ── 选择管理 ──────────────────────────────────────────────────────────
 
     def _get_selected_tags(self) -> list[str]:
         table_tags = [row['tag'] for row in self.result_table.selected] if self.result_table else []
@@ -592,7 +779,8 @@ class DanbooruSearchUI:
             self.selection_count_label.text = str(len(all_tags))
 
     def _update_selection_display(self, _e):
-        if self.result_table is None: return
+        if self.result_table is None:
+            return
         self._mark_interaction()
 
         all_tags = self._get_selected_tags()
@@ -600,49 +788,36 @@ class DanbooruSearchUI:
         if self.selection_count_label is not None:
             self.selection_count_label.text = str(len(all_tags))
 
+        show_nsfw_val = self.input_nsfw.value
         if all_tags:
-            self._refresh_related_from_selection(all_tags, self.input_nsfw.value)
+            self._refresh_related_from_selection(all_tags, show_nsfw_val)
         else:
             self.chip_extra_selected.clear()
-            self._refresh_related([], self.input_nsfw.value)
+            self._refresh_related([], show_nsfw_val)
 
-    def _render_related_chips(self, related: list, show_nsfw: bool):
-        CAT_CHIP_COLORS = {
-            'General': 'blue', 'Character': 'green',
-            'Copyright': 'pink', 'Artist': 'orange',
-        }
-        filtered = [r for r in related if not (r.nsfw == '1' and not show_nsfw)]
-        if not filtered:
-            ui.label('暂无推荐').classes('text-xs text-gray-400 italic')
-            return
-        selected_now = set(self._get_selected_tags())
-        for r in filtered:
-            color = CAT_CHIP_COLORS.get(r.category, 'grey')
-            is_selected = r.tag in selected_now
-            label = r.tag + (' 🔴' if r.nsfw == '1' else '')
-            sources_str = '、'.join(r.sources) if r.sources else '—'
-            tooltip = (
-                f"{r.cn_name}\n"
-                f"共现: {r.cooc_count:,}  相关度: {r.cooc_score:.2f}\n"
-                f"来自选中: {sources_str}"
-            ) if r.cn_name else f"共现: {r.cooc_count:,}\n来自选中: {sources_str}"
-            props = f'color={color} clickable' if is_selected else f'color={color} outline clickable'
-            with ui.chip(label).props(props) as chip:
-                ui.tooltip(tooltip).classes('text-sm whitespace-pre')
+    def _on_related_checkbox_change(self, tag: str, checked: bool):
+        self._mark_interaction()
+        current = self._get_selected_tags()
+        if checked:
+            if tag not in current:
+                current.append(tag)
+                self._set_selected_tags(current)
+                ui.notify(f'已添加 {tag}', type='positive', timeout=1500)
+        else:
+            if tag in current:
+                current.remove(tag)
+                self._set_selected_tags(current)
+                ui.notify(f'已移除 {tag}', type='warning', timeout=1500)
 
-            def _on_click(tag=r.tag):
-                self._mark_interaction()
-                current = self._get_selected_tags()
-                if tag in current:
-                    current.remove(tag)
-                    self._set_selected_tags(current)
-                    ui.notify(f'已移除 {tag}', type='warning', timeout=1500)
-                else:
-                    current.append(tag)
-                    self._set_selected_tags(current)
-                    ui.notify(f'已添加 {tag}', type='positive', timeout=1500)
-                self._refresh_related(self.current_related, show_nsfw)
-            chip.on('click', _on_click)
+        show_nsfw_val = self.input_nsfw.value
+        all_tags = self._get_selected_tags()
+        if all_tags:
+            self._refresh_related_from_selection(all_tags, show_nsfw_val)
+        else:
+            self.chip_extra_selected.clear()
+            self._refresh_related([], show_nsfw_val)
+
+    # ── 关联推荐 ──────────────────────────────────────────────────────────
 
     def _refresh_related(self, related: list, show_nsfw: bool):
         selected_now = set(self._get_selected_tags())
@@ -652,11 +827,8 @@ class DanbooruSearchUI:
         merged = list(related) + preserved
 
         self.current_related = merged
-        if self.related_container is None:
-            return
-        self.related_container.clear()
-        with self.related_container:
-            self._render_related_chips(merged, show_nsfw)
+        if self.related_list_container is not None:
+            self._render_related_list(merged, show_nsfw)
 
     def _refresh_related_from_selection(self, selected_tags: list[str], show_nsfw: bool):
         async def _do():
@@ -671,23 +843,67 @@ class DanbooruSearchUI:
             self._refresh_related(related, show_nsfw)
         asyncio.ensure_future(_do())
 
-    def update_table_columns(self, e=None):
-        cols = list(BASE_COLUMNS)
-        if self.sw_semantic.value: cols.append(OPTIONAL_COLS['semantic'])
-        if self.sw_layer.value:    cols.append(OPTIONAL_COLS['layer'])
-        if self.sw_source.value:   cols.append(OPTIONAL_COLS['source'])
+    # ── 表格列动态更新 ──────────────────────────────────────────────────
+
+    def _update_table_columns(self, e=None):
+        cols = list(TABLE_COLUMNS)
+        if self.sw_semantic and self.sw_semantic.value:
+            cols.append(OPTIONAL_COLS['semantic'])
+        if self.sw_layer and self.sw_layer.value:
+            cols.append(OPTIONAL_COLS['layer'])
+        if self.sw_source and self.sw_source.value:
+            cols.append(OPTIONAL_COLS['source'])
         self.result_table.columns = cols
 
-    def handle_nsfw_change(self, val: bool):
-        self.result_table.rows = apply_nsfw_filter(self.full_table_data, val)
-        if not val:
-            self.result_table.selected = [r for r in self.result_table.selected if r.get('nsfw') != '1']
-        if self.full_tags_str or self.full_tags_str_sfw:
-            self.all_result_area.value = self.full_tags_str if val else self.full_tags_str_sfw
-        self._update_selection_display(None)
+    # ── NSFW 切换 ─────────────────────────────────────────────────────────
 
     def on_nsfw_toggle(self, e):
-        self.handle_nsfw_change(self.input_nsfw.value)
+        show_nsfw_val = self.input_nsfw.value
+
+        self.result_table.rows = apply_nsfw_filter(self.full_table_data, show_nsfw_val)
+        if not show_nsfw_val:
+            self.result_table.selected = [r for r in self.result_table.selected if r.get('nsfw') != '1']
+        self._update_selection_display(None)
+
+    # ── 复制 / 反馈 ──────────────────────────────────────────────────────
+
+    def copy_selection(self):
+        self._mark_interaction()
+        ui.clipboard.write(self.selected_display.value)
+        ui.notify('已复制选中标签!', type='positive')
+
+        async def silent_copy_update():
+            try:
+                await counter.increment_copy()
+            except Exception:
+                pass
+        asyncio.create_task(silent_copy_update())
+
+    def _copy_all_tags(self):
+        self._mark_interaction()
+        show_nsfw_val = self.input_nsfw.value
+        tags_str = self.full_tags_str if show_nsfw_val else self.full_tags_str_sfw
+        if tags_str:
+            ui.clipboard.write(tags_str)
+            ui.notify('已复制全部标签!', type='positive')
+        else:
+            ui.notify('暂无标签可复制', type='warning')
+
+    async def report_bad_case(self):
+        query = self.current_query_str.strip()
+        if len(query) <= 1:
+            ui.notify('搜索词太短，无法提交反馈。', type='warning', timeout=2000)
+            return
+        if self.bad_case_btn is not None:
+            self.bad_case_btn.disable()
+        try:
+            await counter.add_bad_case(query)
+            ui.notify('感谢反馈！我们会持续优化。', type='positive', timeout=3000)
+        except Exception as e:
+            print(f'[UI] bad_case 记录异常: {e}')
+            ui.notify('记录失败，请稍后再试。', type='warning', timeout=3000)
+            if self.bad_case_btn is not None:
+                self.bad_case_btn.enable()
 
 
 # ── 页面路由 ───────────────────────────────────────────────────────────────────
@@ -709,7 +925,7 @@ async def main_page():
 # ── 入口 ───────────────────────────────────────────────────────────────────────
 
 if __name__ in {'__main__', '__mp_main__'}:
-    host, port = get_host_port()   # 由 platform_utils 统一决定
+    host, port = get_host_port()
 
     @app.on_startup
     def _warmup():
@@ -753,6 +969,7 @@ if __name__ in {'__main__', '__mp_main__'}:
     @app.head('/')
     async def head_root():
         return PlainTextResponse("")
+
     ui.run(
         host=host,
         port=port,
