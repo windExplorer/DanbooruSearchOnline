@@ -425,7 +425,7 @@ class DanbooruSearchUI:
         with ui.element('div').classes('w-full two-col-layout'):
             # ── 左栏：语义匹配结果（表格）──
             with ui.card().classes('col-left'):
-                with ui.row().classes('items-center justify-between mb-2'):
+                with ui.row().classes('items-center justify-between mb-2 w-full'):
                     ui.label('匹配标签结果').classes('font-bold text-lg text-gray-800')
                     ui.button('复制全部标签', icon='content_copy', on_click=self._copy_all_tags) \
                         .props('dense flat color=primary').classes('text-sm')
@@ -486,7 +486,6 @@ class DanbooruSearchUI:
                             </template>
                             <template v-else>{{ col.value }}</template>
                         </q-td>
-                        <!-- 整行 wiki tooltip（NSFW 模糊行不显示） -->
                         <q-tooltip v-if="props.row.wiki && !props.row._nsfw_blocked"
                             content-class="bg-black text-white shadow-4"
                             max-width="500px" :offset="[10,10]">
@@ -503,16 +502,22 @@ class DanbooruSearchUI:
 
             # ── 右栏：关联推荐 ──
             with ui.card().classes('col-right'):
-                with ui.row().classes('items-center gap-2 mb-2'):
-                    ui.label('关联推荐').classes('font-bold text-lg text-gray-800')
-                    with ui.icon('info_outline', size='sm', color='grey').classes('cursor-help'):
-                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
-                            ui.html('基于标签共现数据，发掘语义之外的相关性，为您推荐更多可能的标签。<br>勾选结果行后自动更新；勾选可加入或移出已选。').style('font-size:14px;line-height:1.5;')
+                with ui.row().classes('items-center justify-between w-full mb-2'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('关联推荐').classes('font-bold text-lg text-gray-800')
+                        with ui.icon('info_outline', size='sm', color='grey').classes('cursor-help'):
+                            with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                                ui.html(
+                                    '基于标签共现数据，发掘语义之外的相关性，为您推荐更多可能的标签。<br>勾选可加入或移出已选。如需根据最新选项更新推荐，请点击刷新按钮。').style(
+                                    'font-size:14px;line-height:1.5;')
+
+                    # 新增手动刷新按钮
+                    ui.button('根据已选刷新', icon='refresh', on_click=self._manual_refresh_related) \
+                        .props('dense flat color=primary').classes('text-sm')
 
                 self.related_list_container = ui.column().classes('w-full gap-0')
                 with self.related_list_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
-
     # ══════════════════════════════════════════════════════════════════════
     # 渲染关联推荐列表
     # ══════════════════════════════════════════════════════════════════════
@@ -809,13 +814,19 @@ class DanbooruSearchUI:
                 self._set_selected_tags(current)
                 ui.notify(f'已移除 {tag}', type='warning', timeout=1500)
 
+    def _manual_refresh_related(self):
+        """手动触发关联推荐列表的刷新"""
+        self._mark_interaction()
         show_nsfw_val = self.input_nsfw.value
         all_tags = self._get_selected_tags()
+
         if all_tags:
             self._refresh_related_from_selection(all_tags, show_nsfw_val)
+            ui.notify('已触发关联推荐更新', type='info', timeout=1500)
         else:
             self.chip_extra_selected.clear()
             self._refresh_related([], show_nsfw_val)
+            ui.notify('已清空关联推荐', type='info', timeout=1500)
 
     # ── 关联推荐 ──────────────────────────────────────────────────────────
 
