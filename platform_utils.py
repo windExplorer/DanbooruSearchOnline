@@ -32,12 +32,15 @@ platform_utils.py
   │   MODELSCOPE_ENVIRONMENT  存在即代表在魔搭环境（值通常为 "studio"）  │
   │   STUDIO_ID               创空间 ID（备用检测）                      │
   │                                                                      │
-  │ 用户手动配置（魔搭 Secrets）：                                        │
-  │   MS_DATA_REPO_ID   存放数据文件的魔搭 Model repo                    │
-  │                     形如 "YourName/DanbooruSearchData"               │
-  │   MS_TOKEN          魔搭访问令牌（公开 repo 可不填）                 │
+  │ 用户手动配置（魔搭 Secrets，全部可选）：                              │
+  │   MS_TOKEN          魔搭访问令牌（计数器持久化用）                   │
   │   MS_COUNTER_REPO   存放计数 JSON 的魔搭 Dataset repo                │
   │                     形如 "YourName/DanbooruSearchStats"              │
+  │                                                                      │
+  │ 魔搭平台数据文件说明：                                                │
+  │   数据文件（CSV / parquet / safetensors）直接放在创空间 studio repo  │
+  │   中，容器启动时会自动同步到工作目录，download_file() 在 MS 平台     │
+  │   直接返回本地路径，无需额外配置 Model repo。                         │
   └──────────────────────────────────────────────────────────────────────┘
 """
 
@@ -121,6 +124,10 @@ def get_counter_cfg() -> CounterConfig:
 
 # ── 文件下载 ──────────────────────────────────────────────────────────────────
 
+# 魔搭创空间工作目录，studio repo 的文件会被同步到此处
+_MS_WORKDIR = Path('/home/user/app')
+
+
 def download_file(
     filename: str,
     *,
@@ -128,7 +135,7 @@ def download_file(
     hf_repo_id:   Optional[str] = None,
     hf_repo_type: str           = 'space',
     hf_token:     Optional[str] = None,
-    # MS 专用参数（Model repo）
+    # MS 专用参数（保留签名兼容性，魔搭平台已不再使用）
     ms_repo_id:   Optional[str] = None,
     ms_token:     Optional[str] = None,
     ms_cache_dir: str           = '/tmp/ms_cache',
@@ -136,14 +143,15 @@ def download_file(
     """
     下载单个文件，返回本地绝对路径字符串。
 
-    参数会根据当前 PLATFORM 自动选取，调用方也可显式传入 repo_id 覆盖默认值。
-
     HF 平台：
-        hf_repo_id   默认读取环境变量 SPACE_ID
-        hf_repo_type 默认 'space'（也支持 'model' / 'dataset'）
+        从 Space repo 下载，hf_repo_id 默认读取环境变量 SPACE_ID。
 
     MS 平台：
-        ms_repo_id   默认读取环境变量 MS_DATA_REPO_ID
+        文件已随 studio repo 部署到容器本地，直接返回工作目录下的路径，
+        无需配置任何额外 repo。若文件不存在则抛出 FileNotFoundError。
+
+    本地：
+        直接返回原始路径。
     """
     if PLATFORM == 'hf':
         from huggingface_hub import hf_hub_download
@@ -158,18 +166,15 @@ def download_file(
         )
 
     if PLATFORM == 'ms':
-        from modelscope.hub.file_download import model_file_download
-        repo_id = ms_repo_id or os.environ.get('MS_DATA_REPO_ID')
-        if not repo_id:
-            raise RuntimeError(
-                '[platform_utils] 魔搭平台未配置 MS_DATA_REPO_ID，无法下载文件。\n'
-                '请在创空间 Secrets 中添加 MS_DATA_REPO_ID=YourName/DanbooruData'
+        # 魔搭创空间：文件直接在工作目录，无需网络请求
+        local_path = _MS_WORKDIR / filename
+        if not local_path.is_file():
+            raise FileNotFoundError(
+                f'[platform_utils] 魔搭平台本地文件不存在: {local_path}\n'
+                f'请确认已将 {filename} 提交到创空间 studio repo 中。'
             )
-        return model_file_download(
-            model_id=repo_id,
-            file_path=filename,
-            cache_dir=ms_cache_dir,
-        )
+        print(f'[platform_utils] MS 本地文件: {local_path}')
+        return str(local_path)
 
     # 本地环境：直接返回原始路径（由调用方保证文件存在）
     return filename
