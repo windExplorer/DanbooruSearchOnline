@@ -211,17 +211,39 @@ def read_bytes(filename: str, cfg: CounterConfig) -> Optional[bytes]:
             raise
 
     if cfg.platform == 'ms':
-        from modelscope.hub.file_download import model_file_download
+        # 使用 HubApi 从 Dataset repo 读取，与 upload_bytes 保持一致
+        # model_file_download 只能读 Model repo，计数器存在 Dataset repo，接口不同
         try:
-            path = model_file_download(
-                model_id=cfg.repo_id,
-                file_path=filename,
-                cache_dir='/tmp/ms_counter_cache',
-            )
-            return Path(path).read_bytes()
+            import tempfile
+            from modelscope.hub.api import HubApi
+
+            api = HubApi()
+            api.login(cfg.token)
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # dataset_file_download 下载 Dataset repo 中的单个文件
+                # 不同版本 SDK 方法名可能不同，做兼容处理
+                if hasattr(api, 'dataset_file_download'):
+                    local = api.dataset_file_download(
+                        dataset_id=cfg.repo_id,
+                        file_path=filename,
+                        local_dir=tmpdir,
+                    )
+                else:
+                    # 旧版 SDK 回退：直接用 get_dataset_file_base_url 拼 URL 下载
+                    import urllib.request
+                    url = (
+                        f'https://www.modelscope.cn/api/v1/datasets/'
+                        f'{cfg.repo_id}/repo?Revision=master&FilePath={filename}'
+                    )
+                    headers = {'Authorization': f'Bearer {cfg.token}'}
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        return resp.read()
+                return Path(local).read_bytes()
         except Exception as e:
             err_msg = str(e).lower()
-            if 'not found' in err_msg or '404' in err_msg:
+            if 'not found' in err_msg or '404' in err_msg or 'does not exist' in err_msg:
                 return None
             print(f'[platform_utils] MS 读取异常 ({filename}): {e}')
             raise
