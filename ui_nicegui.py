@@ -290,14 +290,14 @@ class DanbooruSearchUI:
                     </div>
                 ''')
                 ui.markdown("""
-- **AI 辅助**：基于语义匹配，结果未必绝对准确 (Results may contain errors)
-- **内容警告**：查找结果可能会包括 NSFW 内容 (May include NSFW content)
-- **检索限制**：仅支持中/英双语查找(CN/EN only)
-- **标签类型**：仅显示特征、角色与作品标签，且仅显示 Danbooru 频数 ≥100 的标签 (General, Character, and Copyright only, Freq>=100)
-- **使用指南**：[DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)
+- **AI 辅助**：基于语义匹配，结果未必绝对准确(Results may contain errors)
+- **内容警告**：查找结果可能包含 NSFW 内容 (May include NSFW content)
+- **检索限制**：仅支持中/英双语查找 (CN/EN only)
+- **标签范围**：仅显示特征、角色与作品标签，且频数须 ≥ 100 (General, Character & Copyright only, Freq ≥ 100)
 - **ComfyUI 插件**：[ComfyUI-DanbooruSearcher](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher)
-- **使用API服务：** [API文档](/api/docs)
-- **支持作者**：如果觉得好用，请点击顶部给本 Space 点个 **Like ❤️**，或前往 GitHub 点个 **Star ⭐**！
+- **API 服务**：[接口文档](/api/docs)
+- **支持作者**：如果觉得好用，欢迎点击顶部给本 Space 点个 **Like ❤️**，或前往 [GitHub](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher) 点个 **Star ⭐**！
+- **🚀 首次使用？[点击查看使用指南](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)**，了解五种搜索模式与进阶技巧
 """).classes('text-sm text-gray-800 px-4 pb-3')
 
     # ── 搜索卡片 ─────────────────────────────────────────────────────────
