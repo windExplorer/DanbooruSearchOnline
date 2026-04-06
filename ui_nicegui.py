@@ -292,7 +292,7 @@ class DanbooruSearchUI:
                 ui.markdown("""
 - **AI 辅助**：基于语义匹配，结果未必绝对准确(Results may contain errors)
 - **内容警告**：查找结果可能包含 NSFW 内容 (May include NSFW content)
-- **检索限制**：仅支持中/英双语查找 (CN/EN only)
+- **检索限制**：仅支持中/英双语查找 ，更推荐中文(CN/EN only,CN is preferred)
 - **标签范围**：仅显示特征、角色与作品标签，且频数须 ≥ 100 (General, Character & Copyright only, Freq ≥ 100)
 - **ComfyUI 插件**：[ComfyUI-DanbooruSearcher](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher)
 - **API 服务**：[接口文档](/api/docs)
@@ -342,7 +342,7 @@ class DanbooruSearchUI:
                     ui.label().bind_text_from(self.input_weight, 'value', lambda v: f"{v:.2f}") \
                         .classes('text-sm font-mono text-gray-700 w-8')
 
-                with ui.switch('显示 NSFW 内容', value=False).props('color=red') as _nsfw_sw:
+                with ui.switch('显示 NSFW(成人) 内容', value=False).props('color=red') as _nsfw_sw:
                     if not nsfw_allowed():
                         with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
                             ui.label('NSFW 内容在当前平台不可用').style('font-size:14px;')
@@ -941,7 +941,7 @@ if __name__ in {'__main__', '__mp_main__'}:
     @app.on_startup
     def _warmup():
         async def background_init_tasks():
-            await asyncio.sleep(20)
+            await asyncio.sleep(5)
             print("==== [System] 开始预热计数器与引擎 ====", flush=True)
             await counter.init()
             await DanbooruTagger.get_instance()

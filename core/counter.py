@@ -44,8 +44,8 @@ MAX_BAD_CASES = 50
 _last_sync: float = 0.0
 _sync_lock: Optional[asyncio.Lock] = None
 
-SYNC_INTERVAL = 1800       # 每 30 分钟同步一次
-SYNC_THRESHOLD = 200       # 或各项增量之和达到 200 次时同步
+SYNC_INTERVAL = 3600       # 每 60 分钟同步一次
+SYNC_THRESHOLD = 1000       # 或各项增量之和达到 1000 次时同步
 
 
 def _get_sync_lock() -> asyncio.Lock:
