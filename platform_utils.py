@@ -13,9 +13,9 @@ platform_utils.py
   is_cloud()        : bool
   get_host_port()   : tuple[str, int]
   download_file()   : 下载单个文件，返回本地路径
-  upload_bytes()    : 上传 bytes 到 Hub repo（用于计数器持久化）
-  read_bytes()      : 从 Hub repo 读取文件内容，返回 bytes | None
-  get_counter_cfg() : 返回 CounterConfig（repo_id / token / platform）
+  upload_bytes()    : 上传 bytes 到 OSS（用于计数器持久化）
+  read_bytes()      : 从 OSS 读取文件内容，返回 bytes | None
+  get_counter_cfg() : 返回 CounterConfig（platform / available）
 
 环境变量约定：
   ┌──────────────────────────────────────────────────────────────────────┐
@@ -24,23 +24,28 @@ platform_utils.py
   │   SPACE_AUTHOR_NAME 作者名                                           │
   │                                                                      │
   │ 用户手动配置（HF Secrets）：                                         │
-  │   HF_TOKEN          HF 访问令牌                                      │
-  │   HF_USERNAME       HF 用户名（可选，回退到 SPACE_AUTHOR_NAME）      │
-  │   COUNTER_REPO      HF Dataset repo（默认 {username}/DanbooruStats） │
+  │   HF_TOKEN          HF 访问令牌（仅用于 download_file，非计数器）    │
   ├──────────────────────────────────────────────────────────────────────┤
   │ ModelScope 创空间（由魔搭自动注入）                                   │
   │   MODELSCOPE_ENVIRONMENT  存在即代表在魔搭环境（值通常为 "studio"）  │
   │   STUDIO_ID               创空间 ID（备用检测）                      │
   │                                                                      │
-  │ 用户手动配置（魔搭 Secrets，全部可选）：                              │
-  │   MS_TOKEN          魔搭访问令牌（计数器持久化用）                   │
-  │   MS_COUNTER_REPO   存放计数 JSON 的魔搭 Dataset repo                │
-  │                     形如 "YourName/DanbooruSearchStats"              │
-  │                                                                      │
   │ 魔搭平台数据文件说明：                                                │
   │   数据文件（CSV / parquet / safetensors）直接放在创空间 studio repo  │
   │   中，容器启动时会自动同步到工作目录，download_file() 在 MS 平台     │
   │   直接返回本地路径，无需额外配置 Model repo。                         │
+  ├──────────────────────────────────────────────────────────────────────┤
+  │ 阿里云 OSS（计数器唯一后端，HF 与 MS 共享同一数据）                  │
+  │                                                                      │
+  │   OSS_ACCESS_KEY_ID      RAM 子账号 AccessKey ID                    │
+  │   OSS_ACCESS_KEY_SECRET  RAM 子账号 AccessKey Secret                │
+  │   OSS_ENDPOINT           Bucket 所在地域节点                         │
+  │                          例: oss-cn-hangzhou.aliyuncs.com           │
+  │                          （无需加 https://，代码自动拼接）            │
+  │   OSS_BUCKET_NAME        Bucket 名称                                 │
+  │   OSS_COUNTER_DIR        计数文件在 Bucket 中的前缀目录（可选）       │
+  │                          默认 "danbooru_counter"                    │
+  │                          最终路径: {OSS_COUNTER_DIR}/count.json     │
   └──────────────────────────────────────────────────────────────────────┘
 """
 
@@ -50,6 +55,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+import oss2
 from typing import Literal, Optional
 
 # ── 平台检测 ─────────────────────────────────────────────────────────────────
@@ -91,38 +97,119 @@ def nsfw_allowed() -> bool:
     return PLATFORM != 'ms'
 
 
+# ── 阿里云 OSS ────────────────────────────────────────────────────────────────
+
+def _get_oss_bucket():
+    """
+    从环境变量读取 OSS 配置，返回 oss2.Bucket 对象。
+    若环境变量不完整或 oss2 未安装则返回 None。
+    """
+    ak  = os.environ.get('OSS_ACCESS_KEY_ID')
+    sk  = os.environ.get('OSS_ACCESS_KEY_SECRET')
+    ep  = os.environ.get('OSS_ENDPOINT')
+    bkt = os.environ.get('OSS_BUCKET_NAME')
+    if not all([ak, sk, ep, bkt]):
+        return None
+    try:
+        import oss2
+        auth = oss2.Auth(ak, sk)
+        endpoint = ep if ep.startswith('http') else f'https://{ep}'
+        return oss2.Bucket(auth, endpoint, bkt)
+    except ImportError:
+        print('[platform_utils] oss2 未安装，OSS 计数器不可用。请 pip install oss2。')
+        return None
+
+
+def _oss_key(filename: str) -> str:
+    """将 filename 拼上可选的前缀目录，得到 OSS Object Key。"""
+    prefix = os.environ.get('OSS_COUNTER_DIR', 'danbooru_counter').rstrip('/')
+    return f'{prefix}/{filename}'
+
+
+def _oss_available() -> bool:
+    """检测 OSS 四项环境变量是否均已设置且 oss2 可导入。"""
+    return _get_oss_bucket() is not None
+
+
 # ── 计数器配置 ────────────────────────────────────────────────────────────────
 
 @dataclass
 class CounterConfig:
-    platform: Literal['hf', 'ms', 'local']
-    repo_id:  Optional[str]
-    token:    Optional[str]
+    platform: Literal['oss', 'local']
 
     @property
     def available(self) -> bool:
-        return bool(self.repo_id and self.token and self.platform != 'local')
+        if self.platform == 'oss':
+            return _oss_available()
+        return False
 
 
 def get_counter_cfg() -> CounterConfig:
-    """读取当前平台的计数器配置。"""
-    if PLATFORM == 'hf':
-        token    = os.environ.get('HF_TOKEN')
-        username = os.environ.get('HF_USERNAME') or os.environ.get('SPACE_AUTHOR_NAME')
-        repo_id  = os.environ.get('COUNTER_REPO') or (
-            f'{username}/DanbooruSearchStats' if username else None
-        )
-        return CounterConfig(platform='hf', repo_id=repo_id, token=token)
-
-    if PLATFORM == 'ms':
-        token   = os.environ.get('MS_TOKEN')
-        repo_id = os.environ.get('MS_COUNTER_REPO')
-        return CounterConfig(platform='ms', repo_id=repo_id, token=token)
-
-    return CounterConfig(platform='local', repo_id=None, token=None)
+    """
+    读取计数器配置。
+    配置了 OSS 环境变量则使用 OSS，否则退化为本地模式（无持久化）。
+    """
+    if _oss_available():
+        return CounterConfig(platform='oss')
+    return CounterConfig(platform='local')
 
 
-# ── 文件下载 ──────────────────────────────────────────────────────────────────
+# ── 计数器读写（OSS）─────────────────────────────────────────────────────────
+
+def read_bytes(filename: str, cfg: CounterConfig) -> Optional[bytes]:
+    """
+    从 OSS 读取文件内容，返回 bytes。
+    文件不存在返回 None；网络或权限异常向上抛出。
+    """
+    if not cfg.available:
+        return None
+
+    bucket = _get_oss_bucket()
+    key = _oss_key(filename)
+    try:
+        import oss2
+        result = bucket.get_object(key)
+        return result.read()
+    except oss2.exceptions.NoSuchKey:
+        return None
+    except Exception as e:
+        print(f'[platform_utils] OSS 读取失败 ({key}): {e}')
+        raise
+
+
+def upload_bytes(
+    content: bytes,
+    filename: str,
+    cfg: CounterConfig,
+    commit_message: str = 'Update',
+    *,
+    retries: int = 3,
+    retry_delay: float = 1.0,
+) -> bool:
+    """
+    将 bytes 写入 OSS 的 filename 路径。
+    返回 True 表示成功，False 表示全部重试均失败。
+    commit_message 参数保留以兼容 counter.py 的调用签名，OSS 不使用。
+    """
+    if not cfg.available:
+        return False
+
+    bucket = _get_oss_bucket()
+    key = _oss_key(filename)
+
+    for attempt in range(retries):
+        try:
+            bucket.put_object(key, content)
+            return True
+        except Exception as e:
+            print(f'[platform_utils] OSS 上传失败（第 {attempt + 1} 次）({key}): {e}')
+            if attempt < retries - 1:
+                time.sleep(retry_delay)
+
+    return False
+
+
+# ── 文件下载（引擎数据文件，与计数器无关）────────────────────────────────────
 
 # 魔搭创空间工作目录，studio repo 的文件会被同步到此处
 _MS_WORKDIR = Path('/home/user/app')
@@ -141,7 +228,7 @@ def download_file(
     ms_cache_dir: str           = '/tmp/ms_cache',
 ) -> str:
     """
-    下载单个文件，返回本地绝对路径字符串。
+    下载单个引擎数据文件，返回本地绝对路径字符串。
 
     HF 平台：
         从 Space repo 下载，hf_repo_id 默认读取环境变量 SPACE_ID。
@@ -166,7 +253,6 @@ def download_file(
         )
 
     if PLATFORM == 'ms':
-        # 魔搭创空间：文件直接在工作目录，无需网络请求
         local_path = _MS_WORKDIR / filename
         if not local_path.is_file():
             raise FileNotFoundError(
@@ -178,156 +264,6 @@ def download_file(
 
     # 本地环境：直接返回原始路径（由调用方保证文件存在）
     return filename
-
-
-# ── Hub 读写（用于计数器持久化）────────────────────────────────────────────────
-
-def read_bytes(filename: str, cfg: CounterConfig) -> Optional[bytes]:
-    """
-    从 Hub repo 读取文件内容，返回 bytes。
-    若文件不存在返回 None；若发生网络或超时错误则抛出异常。
-    """
-    if not cfg.available:
-        return None
-
-    if cfg.platform == 'hf':
-        from huggingface_hub import hf_hub_download
-        from huggingface_hub.utils import EntryNotFoundError
-        try:
-            path = hf_hub_download(
-                repo_id=cfg.repo_id,
-                repo_type='dataset',
-                filename=filename,
-                token=cfg.token,
-                force_download=True,
-            )
-            return Path(path).read_bytes()
-        except EntryNotFoundError:
-            # 明确是文件不存在，返回 None
-            return None
-        except Exception as e:
-            # 网络超时等异常，直接向上抛出
-            print(f'[platform_utils] HF 读取异常 ({filename}): {e}')
-            raise
-
-    if cfg.platform == 'ms':
-        # 使用 HubApi 从 Dataset repo 读取，与 upload_bytes 保持一致
-        # model_file_download 只能读 Model repo，计数器存在 Dataset repo，接口不同
-        try:
-            import tempfile
-            from modelscope.hub.api import HubApi
-
-            api = HubApi()
-            api.login(cfg.token)
-
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # dataset_file_download 下载 Dataset repo 中的单个文件
-                # 不同版本 SDK 方法名可能不同，做兼容处理
-                if hasattr(api, 'dataset_file_download'):
-                    local = api.dataset_file_download(
-                        dataset_id=cfg.repo_id,
-                        file_path=filename,
-                        local_dir=tmpdir,
-                    )
-                else:
-                    # 旧版 SDK 回退：直接用 get_dataset_file_base_url 拼 URL 下载
-                    import urllib.request
-                    url = (
-                        f'https://www.modelscope.cn/api/v1/datasets/'
-                        f'{cfg.repo_id}/repo?Revision=master&FilePath={filename}'
-                    )
-                    headers = {'Authorization': f'Bearer {cfg.token}'}
-                    req = urllib.request.Request(url, headers=headers)
-                    with urllib.request.urlopen(req, timeout=15) as resp:
-                        return resp.read()
-                return Path(local).read_bytes()
-        except Exception as e:
-            err_msg = str(e).lower()
-            if 'not found' in err_msg or '404' in err_msg or 'does not exist' in err_msg:
-                return None
-            print(f'[platform_utils] MS 读取异常 ({filename}): {e}')
-            raise
-
-    return None
-
-
-def upload_bytes(
-    content: bytes,
-    filename: str,
-    cfg: CounterConfig,
-    commit_message: str = 'Update',
-    *,
-    retries: int = 3,
-    retry_delay: float = 1.0,
-) -> bool:
-    """
-    将 bytes 上传到 Hub repo 的 filename 路径。
-    返回 True 表示成功，False 表示全部重试均失败。
-    """
-    if not cfg.available:
-        return False
-
-    for attempt in range(retries):
-        try:
-            if cfg.platform == 'hf':
-                from huggingface_hub import HfApi
-                from huggingface_hub.utils import HfHubHTTPError
-                api = HfApi(token=cfg.token)
-                api.upload_file(
-                    path_or_fileobj=content,
-                    path_in_repo=filename,
-                    repo_id=cfg.repo_id,
-                    repo_type='dataset',
-                    commit_message=commit_message,
-                )
-                return True
-
-            if cfg.platform == 'ms':
-                _ms_upload_bytes(content, filename, cfg, commit_message)
-                return True
-
-        except Exception as e:
-            # HF 412 是乐观锁冲突，值得重试
-            if 'hf' in str(type(e).__module__) and '412' in str(e):
-                pass
-            print(f'[platform_utils] 上传失败（第 {attempt + 1} 次）: {e}')
-            if attempt < retries - 1:
-                time.sleep(retry_delay)
-
-    return False
-
-
-def _ms_upload_bytes(
-    content: bytes,
-    filename: str,
-    cfg: CounterConfig,
-    commit_message: str,
-) -> None:
-    """
-    魔搭上传实现。
-    魔搭 Dataset repo 的文件上传需要先写临时文件再调用 HubApi.upload。
-    """
-    import tempfile
-    from modelscope.hub.api import HubApi
-
-    api = HubApi()
-    api.login(cfg.token)
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    try:
-        # 魔搭 Dataset repo 上传接口
-        api.upload_file(
-            path_or_fileobj=tmp_path,
-            path_in_repo=filename,
-            repo_id=cfg.repo_id,
-            repo_type='dataset',
-            commit_message=commit_message,
-        )
-    finally:
-        os.unlink(tmp_path)
 
 
 # ── 模型路径解析 ───────────────────────────────────────────────────────────────
