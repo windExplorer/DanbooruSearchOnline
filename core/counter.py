@@ -3,8 +3,19 @@ core/counter.py
 ──────────────
 极简持久化计数器（核心业务指标：总搜索、总访问、复制次数、成功交互、词频聚合、bad_case）。
 
-数据持久化到 Hub（HF Dataset repo 或魔搭 Dataset repo），通过 platform_utils 屏蔽差异。
+数据持久化到阿里云 OSS，通过 platform_utils 屏蔽细节。
 无任何本地落盘操作。
+
+count.json 结构：
+  {
+    "total":        int,
+    "visits":       int,
+    "copies":       int,
+    "successes":    int,
+    "hot_keywords": {word: count, ...},
+    "bad_cases":    [{q, t}, ...],
+    "history":      [{"date": "YYYY-MM-DD", "total": int}, ...]   # 每日快照，最近 180 天
+  }
 """
 
 from __future__ import annotations
@@ -13,7 +24,7 @@ import asyncio
 import json
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Optional
 
 from platform_utils import get_counter_cfg, read_bytes, upload_bytes, CounterConfig
@@ -41,11 +52,14 @@ _memory_bad_cases: list[dict] = []
 _dirty_bad_cases: list[dict] = []
 MAX_BAD_CASES = 50
 
+_memory_history: list[dict] = []   # [{"date": "YYYY-MM-DD", "total": int}, ...]
+MAX_HISTORY_DAYS = 180
+
 _last_sync: float = 0.0
 _sync_lock: Optional[asyncio.Lock] = None
 
-SYNC_INTERVAL = 3600       # 每 60 分钟同步一次
-SYNC_THRESHOLD = 1000       # 或各项增量之和达到 1000 次时同步
+SYNC_INTERVAL = 1800       # 每 30 分钟同步一次
+SYNC_THRESHOLD = 200       # 或各项增量之和达到 200 次时同步
 
 
 def _get_sync_lock() -> asyncio.Lock:
@@ -55,13 +69,34 @@ def _get_sync_lock() -> asyncio.Lock:
     return _sync_lock
 
 
+# ── 历史快照工具 ──────────────────────────────────────────────────────────────
+
+def _today_str() -> str:
+    return date.today().isoformat()
+
+
+def _merge_history(existing: list[dict], current_total: int) -> list[dict]:
+    """
+    将当天的 total 写入（或更新）历史列表，保留最近 MAX_HISTORY_DAYS 天。
+    同一天只保留最新一条（total 取较大值）。
+    """
+    today = _today_str()
+    by_date: dict[str, int] = {r['date']: r['total'] for r in existing}
+    # 当天记录取较大值，避免同步时序问题导致数据回退
+    by_date[today] = max(by_date.get(today, 0), current_total)
+
+    sorted_records = sorted(by_date.items(), reverse=True)[:MAX_HISTORY_DAYS]
+    # 返回时按时间正序，方便绘图
+    return [{'date': d, 'total': t} for d, t in sorted(sorted_records)]
+
+
 # ── 远端 IO ───────────────────────────────────────────────────────────────────
 
 _COUNTER_FILE = 'count.json'
 
 
-def _parse_remote_data(raw: bytes) -> tuple[int, int, int, int, dict, list]:
-    """解析远端 JSON bytes，返回 (total, visits, copies, successes, keywords, bad_cases)。"""
+def _parse_remote_data(raw: bytes) -> tuple[int, int, int, int, dict, list, list]:
+    """解析远端 JSON bytes，返回 (total, visits, copies, successes, keywords, bad_cases, history)。"""
     try:
         data = json.loads(raw.decode('utf-8'))
         r_total     = int(data.get('total',     0))
@@ -70,24 +105,25 @@ def _parse_remote_data(raw: bytes) -> tuple[int, int, int, int, dict, list]:
         r_successes = int(data.get('successes', int(r_total * 0.75)))
         r_keywords  = data.get('hot_keywords', {})
         r_bad_cases = data.get('bad_cases', [])
-        return r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases
+        r_history   = data.get('history', [])
+        return r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases, r_history
     except Exception:
-        return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
+        return 0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
 
 
-def _read_remote() -> tuple[int, int, int, int, dict, list]:
+def _read_remote() -> tuple[int, int, int, int, dict, list, list]:
     cfg = get_counter_cfg()
     if not cfg.available:
-        return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
+        return 0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
 
     try:
         raw = read_bytes(_COUNTER_FILE, cfg)
     except Exception as e:
         print(f'[Counter] 启动读取远端数据异常: {e}')
-        return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
+        return 0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
 
     if raw is None:
-        return 0, BASE_VISITS, BASE_COPIES, 0, {}, []
+        return 0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
     return _parse_remote_data(raw)
 
 
@@ -98,23 +134,24 @@ def _sync_remote_task(
     adds_successes: int,
     adds_keywords: dict,
     adds_bad_cases: list,
-) -> tuple[bool, int, int, int, int, dict, list]:
+) -> tuple[bool, int, int, int, int, dict, list, list]:
     cfg: CounterConfig = get_counter_cfg()
     if not cfg.available:
-        return False, 0, 0, 0, 0, {}, []
+        return False, 0, 0, 0, 0, {}, [], []
 
-    # 尝试读取最新远端值
     try:
         raw = read_bytes(_COUNTER_FILE, cfg)
     except Exception as e:
         print(f'[Counter] 远端读取异常，中止本次同步以保护数据: {e}')
-        return False, 0, 0, 0, 0, {}, []
+        return False, 0, 0, 0, 0, {}, [], []
 
     if raw is not None:
-        r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases = _parse_remote_data(raw)
+        r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases, r_history = (
+            _parse_remote_data(raw)
+        )
     else:
-        r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases = (
-            0, BASE_VISITS, BASE_COPIES, 0, {}, []
+        r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases, r_history = (
+            0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
         )
 
     # ── 合并 ──────────────────────────────────────────────────────────────
@@ -130,7 +167,10 @@ def _sync_remote_task(
 
     merged_bad_cases = (adds_bad_cases + r_bad_cases)[:MAX_BAD_CASES]
 
-    # ── 序列化 ────────────────────────────────────────────────────────────
+    # ── 历史快照：用合并后的 n_total 更新当天记录 ──────────────────────────
+    n_history = _merge_history(r_history, n_total)
+
+    # ── 序列化（history 放最后）──────────────────────────────────────────
     content = json.dumps({
         'total':        n_total,
         'visits':       n_visits,
@@ -138,6 +178,7 @@ def _sync_remote_task(
         'successes':    n_successes,
         'hot_keywords': top_keywords,
         'bad_cases':    merged_bad_cases,
+        'history':      n_history,
     }, ensure_ascii=False, indent=2).encode('utf-8')
 
     commit_msg = (
@@ -145,16 +186,15 @@ def _sync_remote_task(
         f'复制:{n_copies} | 访问:{n_visits} | bad_cases:{len(merged_bad_cases)}'
     )
 
-    # ── 上传（platform_utils 处理平台差异与重试）─────────────────────────
     ok = upload_bytes(content, _COUNTER_FILE, cfg, commit_msg, retries=3, retry_delay=1.0)
     if ok:
         print(
             f'[Counter] 同步成功！搜索:{n_total}, 成功交互:{n_successes}, '
             f'复制:{n_copies}, bad_cases:{len(merged_bad_cases)}'
         )
-        return True, n_total, n_visits, n_copies, n_successes, top_keywords, merged_bad_cases
+        return True, n_total, n_visits, n_copies, n_successes, top_keywords, merged_bad_cases, n_history
 
-    return False, 0, 0, 0, 0, {}, []
+    return False, 0, 0, 0, 0, {}, [], []
 
 
 # ── 后台同步协程 ──────────────────────────────────────────────────────────────
@@ -163,7 +203,7 @@ async def _perform_sync():
     global _dirty_count, _dirty_visits, _dirty_copies, _dirty_successes
     global _dirty_keywords, _dirty_bad_cases, _last_sync
     global _memory_count, _memory_visits, _memory_copies, _memory_successes
-    global _memory_keywords, _memory_bad_cases
+    global _memory_keywords, _memory_bad_cases, _memory_history
 
     lock = _get_sync_lock()
     if lock.locked():
@@ -177,7 +217,6 @@ async def _perform_sync():
         if not has_dirty:
             return
 
-        # 快照脏数据，立即清零，防止同步期间新增量被错误抵消
         c_adds, v_adds, cp_adds, s_adds = (
             _dirty_count, _dirty_visits, _dirty_copies, _dirty_successes
         )
@@ -192,12 +231,11 @@ async def _perform_sync():
         _dirty_bad_cases.clear()
 
         loop = asyncio.get_running_loop()
-        success, l_total, l_visits, l_copies, l_successes, l_keywords, l_bad_cases = (
-            await loop.run_in_executor(
-                None, _sync_remote_task,
-                c_adds, v_adds, cp_adds, s_adds, k_adds, bc_adds,
-            )
+        result = await loop.run_in_executor(
+            None, _sync_remote_task,
+            c_adds, v_adds, cp_adds, s_adds, k_adds, bc_adds,
         )
+        success, l_total, l_visits, l_copies, l_successes, l_keywords, l_bad_cases, l_history = result
 
         if success:
             _last_sync = time.time()
@@ -209,8 +247,9 @@ async def _perform_sync():
             _memory_keywords.update(l_keywords)
             _memory_bad_cases.clear()
             _memory_bad_cases.extend(l_bad_cases)
+            _memory_history.clear()
+            _memory_history.extend(l_history)
         else:
-            # 同步失败：将快照数据放回脏区，等下次重试
             _dirty_count     += c_adds
             _dirty_visits    += v_adds
             _dirty_copies    += cp_adds
@@ -222,9 +261,9 @@ async def _perform_sync():
 # ── 公共 API ──────────────────────────────────────────────────────────────────
 
 async def init():
-    """启动时从 Hub 拉取最新计数，初始化内存状态。"""
+    """启动时从 OSS 拉取最新计数，初始化内存状态。"""
     global _memory_count, _memory_visits, _memory_copies, _memory_successes
-    global _memory_keywords, _memory_bad_cases, _last_sync
+    global _memory_keywords, _memory_bad_cases, _memory_history, _last_sync
 
     cfg = get_counter_cfg()
     if not cfg.available:
@@ -234,16 +273,18 @@ async def init():
     loop = asyncio.get_running_loop()
     (
         _memory_count, _memory_visits, _memory_copies, _memory_successes,
-        r_keys, r_bad_cases,
+        r_keys, r_bad_cases, r_history,
     ) = await loop.run_in_executor(None, _read_remote)
 
     _memory_keywords.update(r_keys)
     _memory_bad_cases.clear()
     _memory_bad_cases.extend(r_bad_cases)
+    _memory_history.clear()
+    _memory_history.extend(r_history)
     _last_sync = time.time()
     print(
         f'[Counter] 初始化完成（{cfg.platform}）：搜索={_memory_count}, '
-        f'访问={_memory_visits}, 复制={_memory_copies}'
+        f'访问={_memory_visits}, 复制={_memory_copies}, 历史={len(_memory_history)}天'
     )
 
 
@@ -313,6 +354,10 @@ def get_hot_keywords(top_n: int = 10) -> dict:
 
 def get_bad_cases() -> list[dict]:
     return list(_memory_bad_cases)
+
+def get_history() -> list[dict]:
+    """返回每日搜索量快照，格式 [{"date": "YYYY-MM-DD", "total": int}, ...]，按日期正序。"""
+    return list(_memory_history)
 
 async def force_sync():
     await _perform_sync()

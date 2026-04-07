@@ -7,6 +7,8 @@ my_model*/
 tags_embedding/
 origin_database/
 .idea/
-test.py
+*ignore*.py
 *.sh
 tempsave/
+*.env
+*.png
