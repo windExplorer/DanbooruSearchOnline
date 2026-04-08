@@ -116,7 +116,7 @@ def _get_oss_bucket():
         endpoint = ep if ep.startswith('http') else f'https://{ep}'
         return oss2.Bucket(auth, endpoint, bkt)
     except ImportError:
-        print('[platform_utils] oss2 未安装，OSS 计数器不可用。请 pip install oss2。')
+        print('[PlatformUtils] oss2 未安装，OSS 计数器不可用。请 pip install oss2。')
         return None
 
 
@@ -173,7 +173,7 @@ def read_bytes(filename: str, cfg: CounterConfig) -> Optional[bytes]:
     except oss2.exceptions.NoSuchKey:
         return None
     except Exception as e:
-        print(f'[platform_utils] OSS 读取失败 ({key}): {e}')
+        print(f'[PlatformUtils] OSS 读取失败 ({key}): {e}')
         raise
 
 
@@ -202,7 +202,7 @@ def upload_bytes(
             bucket.put_object(key, content)
             return True
         except Exception as e:
-            print(f'[platform_utils] OSS 上传失败（第 {attempt + 1} 次）({key}): {e}')
+            print(f'[PlatformUtils] OSS 上传失败（第 {attempt + 1} 次）({key}): {e}')
             if attempt < retries - 1:
                 time.sleep(retry_delay)
 
@@ -244,7 +244,7 @@ def download_file(
         from huggingface_hub import hf_hub_download
         repo_id = hf_repo_id or os.environ.get('SPACE_ID')
         if not repo_id:
-            raise RuntimeError('[platform_utils] HF 平台未找到 SPACE_ID，无法下载文件。')
+            raise RuntimeError('[PlatformUtils] HF 平台未找到 SPACE_ID，无法下载文件。')
         return hf_hub_download(
             repo_id=repo_id,
             repo_type=hf_repo_type,
@@ -256,10 +256,10 @@ def download_file(
         local_path = _MS_WORKDIR / filename
         if not local_path.is_file():
             raise FileNotFoundError(
-                f'[platform_utils] 魔搭平台本地文件不存在: {local_path}\n'
+                f'[PlatformUtils] 魔搭平台本地文件不存在: {local_path}\n'
                 f'请确认已将 {filename} 提交到创空间 studio repo 中。'
             )
-        print(f'[platform_utils] MS 本地文件: {local_path}')
+        print(f'[PlatformUtils] MS 本地文件: {local_path}')
         return str(local_path)
 
     # 本地环境：直接返回原始路径（由调用方保证文件存在）
@@ -282,18 +282,18 @@ def resolve_model_path(prefer_local: Optional[str] = None) -> str:
     """
     local = prefer_local or LOCAL_MODEL_PATH
     if os.path.exists(local):
-        print(f'[platform_utils] 使用本地模型: {local}')
+        print(f'[PlatformUtils] 使用本地模型: {local}')
         return local
 
     if PLATFORM == 'ms':
-        print(f'[platform_utils] 魔搭环境，使用 ModelScope Hub 模型: {MS_MODEL_ID}')
+        print(f'[PlatformUtils] 魔搭环境，使用 ModelScope Hub 模型: {MS_MODEL_ID}')
         try:
             from modelscope import snapshot_download
             cached = snapshot_download(MS_MODEL_ID, cache_dir='/tmp/ms_model')
-            print(f'[platform_utils] 模型已缓存至: {cached}')
+            print(f'[PlatformUtils] 模型已缓存至: {cached}')
             return cached
         except Exception as e:
-            print(f'[platform_utils] ModelScope snapshot_download 失败，回退到 HF ID: {e}')
+            print(f'[PlatformUtils] ModelScope snapshot_download 失败，回退到 HF ID: {e}')
 
-    print(f'[platform_utils] 使用 HuggingFace Hub 模型: {HF_MODEL_ID}')
+    print(f'[PlatformUtils] 使用 HuggingFace Hub 模型: {HF_MODEL_ID}')
     return HF_MODEL_ID

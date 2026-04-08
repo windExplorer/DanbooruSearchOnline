@@ -146,6 +146,7 @@ def _sync_remote_task(
     adds_successes: int,
     adds_keywords: dict,
     adds_bad_cases: list,
+    memory_history_snapshot: list,
 ) -> tuple[bool, int, int, int, int, dict, list, list]:
     cfg: CounterConfig = get_counter_cfg()
     if not cfg.available:
@@ -179,8 +180,8 @@ def _sync_remote_task(
 
     merged_bad_cases = (adds_bad_cases + r_bad_cases)[:MAX_BAD_CASES]
 
-    # ── 历史快照：远端 + 内存双重兜底，防止 OSS 缓存导致历史丢失 ────────────
-    n_history = _merge_history(r_history, n_total, memory=_memory_history)
+    # ── 历史快照：远端 + 调用时快照双重兜底，避免线程竞争读到空列表 ──────────
+    n_history = _merge_history(r_history, n_total, memory=memory_history_snapshot)
 
     # ── 序列化（history 放最后）──────────────────────────────────────────
     content = json.dumps({
@@ -234,6 +235,8 @@ async def _perform_sync():
         )
         k_adds  = dict(_dirty_keywords)
         bc_adds = list(_dirty_bad_cases)
+        # 在清空脏数据前快照 _memory_history，确保传入线程池时不受后续 clear() 影响
+        history_snapshot = list(_memory_history)
 
         _dirty_count     = 0
         _dirty_visits    = 0
@@ -245,7 +248,7 @@ async def _perform_sync():
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None, _sync_remote_task,
-            c_adds, v_adds, cp_adds, s_adds, k_adds, bc_adds,
+            c_adds, v_adds, cp_adds, s_adds, k_adds, bc_adds, history_snapshot,
         )
         success, l_total, l_visits, l_copies, l_successes, l_keywords, l_bad_cases, l_history = result
 

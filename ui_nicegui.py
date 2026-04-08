@@ -10,7 +10,7 @@ NiceGUI 前端层（重构版）。
 """
 import sys
 sys.stdout.reconfigure(line_buffering=True)
-print("==== [Step 1] 脚本开始执行 ====", flush=True)
+print("[UI] 脚本开始执行", flush=True)
 import asyncio
 import os
 import json as _json
@@ -20,10 +20,8 @@ from dataclasses import asdict
 from fastapi.responses import PlainTextResponse
 
 def _excepthook(exc_type, exc_value, exc_tb):
-    print("=" * 60, flush=True)
-    print("FATAL ERROR ON STARTUP:", flush=True)
+    print("[UI] FATAL ERROR ON STARTUP:", flush=True)
     traceback.print_exception(exc_type, exc_value, exc_tb)
-    print("=" * 60, flush=True)
     sys.__excepthook__(exc_type, exc_value, exc_tb)
 
 sys.excepthook = _excepthook
@@ -695,7 +693,7 @@ class DanbooruSearchUI:
                         await counter.add_keywords(response.keywords)
                     self._update_footer_text()
                 except Exception as e:
-                    print(f"[Counter Error] 后台静默更新计数失败: {e}", flush=True)
+                    print(f"[UI] 后台静默更新计数失败: {e}", flush=True)
             asyncio.create_task(silent_counter_update())
 
             if not self._client_alive():
@@ -942,11 +940,11 @@ if __name__ in {'__main__', '__mp_main__'}:
     def _warmup():
         async def background_init_tasks():
             await asyncio.sleep(5)
-            print("==== [System] 开始预热计数器与引擎 ====", flush=True)
+            print("[UI] 开始预热计数器与引擎", flush=True)
             await counter.init()
             await DanbooruTagger.get_instance()
-            print("==== [System] 后台预热全部完成！ ====", flush=True)
-            print("如果您在Log中看到此信息，但Space并未正常运行，请尝试访问：https://sakizuki-danboorusearch.hf.space/", flush=True)
+            print("[UI] 后台预热全部完成！", flush=True)
+            print("[UI] 如果您在Log中看到此信息，但Space并未正常运行，请尝试访问：https://sakizuki-danboorusearch.hf.space/", flush=True)
         asyncio.create_task(background_init_tasks())
 
     @app.on_shutdown
@@ -958,7 +956,7 @@ if __name__ in {'__main__', '__mp_main__'}:
             else:
                 asyncio.run(counter.force_sync())
         except Exception as e:
-            print(f"[System] 关机同步失败: {e}")
+            print(f"[UI] 关机同步失败: {e}")
 
     app.mount('/api', api_app)
 

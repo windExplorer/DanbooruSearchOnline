@@ -31,6 +31,8 @@ async def cmd_search(args):
         popularity_weight=args.weight,
         show_nsfw=not args.no_nsfw,
         use_segmentation=not args.no_seg,
+        target_layers=args.layers,
+        target_categories=args.categories,
     )
     resp = await asyncio.to_thread(tagger.search, request)
 
@@ -49,7 +51,7 @@ async def cmd_search(args):
 async def cmd_related(args):
     seed_tags = [t.strip() for t in args.tags.split(',') if t.strip()]
     if not seed_tags:
-        print("错误：请提供至少一个种子标签，多个标签以逗号分隔。")
+        print("[CLI] 错误：请提供至少一个种子标签，多个标签以逗号分隔。")
         return
 
     tagger = await DanbooruTagger.get_instance()
@@ -62,7 +64,7 @@ async def cmd_related(args):
     )
 
     if not results:
-        print("未找到关联推荐（共现表可能未加载，或种子标签不在库中）。")
+        print("[CLI] 未找到关联推荐（共现表可能未加载，或种子标签不在库中）。")
         return
 
     print(f"\n{'='*60}")
@@ -101,14 +103,27 @@ async def main():
     )
     sub = parser.add_subparsers(dest='cmd', required=True)
 
+    _all_layers = ['英文', '中文扩展词', '释义', '中文核心词']
+    _all_cats   = ['General', 'Character', 'Copyright']
+
     # ── search 子命令 ──
     p_search = sub.add_parser('search', help='语义搜索标签')
     p_search.add_argument('query',       help='搜索词（支持中英文自然语言）')
     p_search.add_argument('--top-k',   type=int,   default=5,    help='每层返回数量（默认 5）')
-    p_search.add_argument('--limit',   type=int,   default=20,   help='结果上限（默认 20）')
+    p_search.add_argument('--limit',   type=int,   default=80,   help='结果上限（默认 80）')
     p_search.add_argument('--weight',  type=float, default=0.15, help='热度权重（默认 0.15）')
     p_search.add_argument('--no-nsfw', action='store_true',      help='过滤 NSFW 内容')
     p_search.add_argument('--no-seg',  action='store_true',      help='禁用智能分词')
+    p_search.add_argument(
+        '--layers', nargs='+', default=_all_layers,
+        metavar='LAYER',
+        help=f'匹配层筛选，可多选，用空格分隔（默认全部）。可选值：{_all_layers}',
+    )
+    p_search.add_argument(
+        '--categories', nargs='+', default=_all_cats,
+        metavar='CAT',
+        help=f'标签类型筛选，可多选，用空格分隔（默认全部）。可选值：{_all_cats}',
+    )
 
     # ── related 子命令 ──
     p_related = sub.add_parser('related', help='基于共现表查关联推荐')
