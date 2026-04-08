@@ -75,13 +75,25 @@ def _today_str() -> str:
     return date.today().isoformat()
 
 
-def _merge_history(existing: list[dict], current_total: int) -> list[dict]:
+def _merge_history(
+    remote: list[dict],
+    current_total: int,
+    memory: list[dict] | None = None,
+) -> list[dict]:
     """
     将当天的 total 写入（或更新）历史列表，保留最近 MAX_HISTORY_DAYS 天。
     同一天只保留最新一条（total 取较大值）。
+
+    remote : 从 OSS 读回的历史（可能因缓存导致不完整）
+    memory : 内存中已加载的历史（init() 时从 OSS 完整读取，用于兜底）
     """
     today = _today_str()
-    by_date: dict[str, int] = {r['date']: r['total'] for r in existing}
+    by_date: dict[str, int] = {}
+    # 先用内存数据打底，再用远端数据覆盖（远端是最终写入态，优先级更高）
+    for r in (memory or []):
+        by_date[r['date']] = r['total']
+    for r in remote:
+        by_date[r['date']] = max(by_date.get(r['date'], 0), r['total'])
     # 当天记录取较大值，避免同步时序问题导致数据回退
     by_date[today] = max(by_date.get(today, 0), current_total)
 
@@ -167,8 +179,8 @@ def _sync_remote_task(
 
     merged_bad_cases = (adds_bad_cases + r_bad_cases)[:MAX_BAD_CASES]
 
-    # ── 历史快照：用合并后的 n_total 更新当天记录 ──────────────────────────
-    n_history = _merge_history(r_history, n_total)
+    # ── 历史快照：远端 + 内存双重兜底，防止 OSS 缓存导致历史丢失 ────────────
+    n_history = _merge_history(r_history, n_total, memory=_memory_history)
 
     # ── 序列化（history 放最后）──────────────────────────────────────────
     content = json.dumps({
