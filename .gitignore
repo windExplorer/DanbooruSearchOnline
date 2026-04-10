@@ -12,3 +12,4 @@ origin_database/
 tempsave/
 *.env
 *.png
+*.bat

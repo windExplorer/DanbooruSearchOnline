@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from core.engine import DanbooruTagger
 from core.models import SearchRequest, SearchResponse, TagResult, RelatedTag
+import core.counter as counter
 
 
 # ── Pydantic I/O 模型（API 层专用，与 core.models 解耦）──
@@ -104,6 +105,11 @@ async def search(body: SearchIn) -> SearchOut:
     # 在线程池中运行阻塞的 search()
     response: SearchResponse = await asyncio.to_thread(tagger.search, request)
 
+    # 计数：每次 API 搜索调用均计入搜索、成功、复制；访问不变
+    await counter.increment()
+    await counter.increment_success()
+    await counter.increment_copy()
+
     return SearchOut(
         tags_all=response.tags_all,
         tags_sfw=response.tags_sfw,
@@ -129,6 +135,11 @@ async def related(body: RelatedIn) -> list[RelatedTagOut]:
         body.limit,
         body.show_nsfw,
     )
+    # 计数：每次 API related 调用均计入搜索、成功、复制；访问不变
+    await counter.increment()
+    await counter.increment_success()
+    await counter.increment_copy()
+
     return [
         RelatedTagOut(
             tag=r.tag,

@@ -334,3 +334,9 @@ POST /api/related
 - 查找结果可能包含 NSFW 内容（默认隐藏）
 - 仅支持中文 / 英文双语查找
 - 如果检索结果不理想，欢迎点击「没搜到？」按钮提交反馈，帮助持续优化引擎
+
+
+
+## 搜索统计
+
+![](https://dsocounter.oss-cn-hongkong.aliyuncs.com/danbooru_counter/search_stats.png)
