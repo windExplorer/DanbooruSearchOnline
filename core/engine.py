@@ -237,10 +237,19 @@ class DanbooruTagger:
         tl    = request.target_layers
         k     = request.top_k
 
-        hits_en   = util.semantic_search(q_emb, self.emb_en,      top_k=k) if '英文'      in tl else empty
-        hits_cn   = util.semantic_search(q_emb, self.emb_cn,      top_k=k) if '中文扩展词' in tl else empty
-        hits_wiki = util.semantic_search(q_emb, self.emb_wiki,    top_k=k) if '释义'      in tl else empty
-        hits_core = util.semantic_search(q_emb, self.emb_cn_core, top_k=k) if '中文核心词' in tl else empty
+        layer_weights  = self._detect_intent(request.query)
+        active_layers  = [l for l in ['英文', '中文扩展词', '释义', '中文核心词'] if l in tl]
+        if active_layers:
+            aw        = {l: layer_weights.get(l, 1.0) for l in active_layers}
+            total_aw  = sum(aw.values())
+            pvk       = {l: max(1, round(k * aw[l] / total_aw)) for l in active_layers}
+        else:
+            pvk = {}
+
+        hits_en   = util.semantic_search(q_emb, self.emb_en,      top_k=pvk.get('英文',      1)) if '英文'      in tl else empty
+        hits_cn   = util.semantic_search(q_emb, self.emb_cn,      top_k=pvk.get('中文扩展词', 1)) if '中文扩展词' in tl else empty
+        hits_wiki = util.semantic_search(q_emb, self.emb_wiki,    top_k=pvk.get('释义',       1)) if '释义'      in tl else empty
+        hits_core = util.semantic_search(q_emb, self.emb_cn_core, top_k=pvk.get('中文核心词', 1)) if '中文核心词' in tl else empty
 
         final: dict[str, TagResult] = {}
 
@@ -264,7 +273,7 @@ class DanbooruTagger:
                 count       = row['post_count']
                 pop_score   = np.log1p(count) / self.max_log_count
                 w           = request.popularity_weight
-                final_score = score * (1 - w) + pop_score * w
+                final_score = score * layer_weights.get(layer, 1.0) * (1 - w) + pop_score * w
                 if tag_name not in final or final_score > final[tag_name].final_score:
                     final[tag_name] = TagResult(
                         tag=tag_name, cn_name=row['cn_name'], category=cat_text,
@@ -473,6 +482,29 @@ class DanbooruTagger:
                     unique_words.add(part)
         for word in unique_words:
             jieba.add_word(word, 2000)
+
+    def _detect_intent(self, query: str) -> dict[str, float]:
+        """
+        根据查询词特征返回各视图的语义分系数。
+        系数 > 1 表示加权，< 1 表示降权。
+        """
+        stripped = query.replace(' ', '')
+        cn_chars = sum(1 for c in stripped if '\u4e00' <= c <= '\u9fff')
+        en_chars = sum(1 for c in stripped if c.isascii() and c.isalpha())
+        total    = max(len(stripped), 1)
+        is_long  = len(query) > 8
+        is_cn    = cn_chars / total > 0.5
+        is_en    = en_chars / total > 0.5
+
+        if is_long and is_cn:
+            return {'英文': 0.8, '中文核心词': 0.9, '中文扩展词': 1.1, '释义': 1.4}
+        if is_long and is_en:
+            return {'英文': 1.0, '中文核心词': 0.8, '中文扩展词': 0.9, '释义': 1.3}
+        if is_cn:
+            return {'英文': 0.8, '中文核心词': 1.3, '中文扩展词': 1.1, '释义': 0.6}
+        if is_en:
+            return {'英文': 1.3, '中文核心词': 1.0, '中文扩展词': 0.8, '释义': 0.6}
+        return {'英文': 1.0, '中文核心词': 1.0, '中文扩展词': 1.0, '释义': 1.0}
 
     def _smart_split(self, text: str) -> list[str]:
         tokens: list[str] = []
