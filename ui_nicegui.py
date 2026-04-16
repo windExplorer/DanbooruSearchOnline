@@ -83,10 +83,15 @@ def apply_nsfw_filter(rows: list[dict], show_nsfw: bool) -> list[dict]:
     return result
 
 
-def _format_tag_with_weight(tag: str, weight: float) -> str:
-    """格式化单个标签，权重 1.0 时输出原始标签，否则输出 (tag:weight) 格式。"""
+def _format_tag_with_weight(tag: str, weight: float, fmt: str = 'sdxl') -> str:
+    """格式化单个标签。
+    sdxl: (tag:1.2)  权重 1.0 时输出 tag
+    nai:  1.2::tag:: 权重 1.0 时输出 tag
+    """
     if weight == 1.0:
         return tag
+    if fmt == 'nai':
+        return f'{weight:.1f}::{tag}::'
     return f'({tag}:{weight:.1f})'
 
 
@@ -113,6 +118,9 @@ class DanbooruSearchUI:
 
         # tag -> prompt 权重，范围 [0.1, 1.9]，默认 1.0
         self.tag_weights: dict[str, float] = {}
+        # 复制格式：'sdxl' 或 'nai'
+        self.prompt_format: str = 'sdxl'
+        self.format_toggle_btn = None
 
         self.init_banner = None
         self.input_top_k = None
@@ -442,6 +450,17 @@ class DanbooruSearchUI:
                     self.bad_case_btn = _bad_btn
                     self.bad_case_btn.disable()
                     self.bad_case_btn.on_click(self.report_bad_case)
+                    self.format_toggle_btn = ui.button(
+                        'SDXL', icon='swap_horiz'
+                    ).props('dense flat color=grey-7').classes('text-xs font-mono')
+                    with self.format_toggle_btn:
+                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                            ui.html(
+                                '切换复制格式：<br>'
+                                '<b>SDXL</b>：<code>(tag:1.2)</code><br>'
+                                '<b>NAI</b>：<code>1.2::tag::</code>'
+                            ).style('font-size:13px;line-height:1.7;')
+                    self.format_toggle_btn.on_click(self._toggle_prompt_format)
                     copy_btn = ui.button('复制选中', icon='content_copy').props('dense unelevated color=primary')
                     copy_btn.on_click(self.copy_selection)
 
@@ -989,12 +1008,28 @@ class DanbooruSearchUI:
 
     # ── 复制 / 反馈 ──────────────────────────────────────────────────────
 
+    def _toggle_prompt_format(self):
+        if self.prompt_format == 'sdxl':
+            self.prompt_format = 'nai'
+            if self.format_toggle_btn:
+                self.format_toggle_btn.text = 'NAI'
+                self.format_toggle_btn.props('color=purple-7')
+        else:
+            self.prompt_format = 'sdxl'
+            if self.format_toggle_btn:
+                self.format_toggle_btn.text = 'SDXL'
+                self.format_toggle_btn.props('color=grey-7')
+
     def copy_selection(self):
         self._mark_interaction()
         tags = self._get_selected_tags()
-        prompt = ', '.join(_format_tag_with_weight(t, self.tag_weights.get(t, 1.0)) for t in tags)
+        prompt = ', '.join(
+            _format_tag_with_weight(t, self.tag_weights.get(t, 1.0), self.prompt_format)
+            for t in tags
+        )
         ui.clipboard.write(prompt)
-        ui.notify('已复制选中标签!', type='positive')
+        fmt_label = 'NAI' if self.prompt_format == 'nai' else 'SDXL'
+        ui.notify(f'已复制选中标签（{fmt_label} 格式）!', type='positive')
 
         async def silent_copy_update():
             try:
