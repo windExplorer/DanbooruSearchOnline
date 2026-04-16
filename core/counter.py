@@ -24,7 +24,7 @@ import asyncio
 import json
 import time
 from collections import Counter
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, timedelta, date
 from typing import Optional
 
 from platform_utils import get_counter_cfg, read_bytes, upload_bytes, CounterConfig
@@ -72,7 +72,7 @@ def _get_sync_lock() -> asyncio.Lock:
 # ── 历史快照工具 ──────────────────────────────────────────────────────────────
 
 def _today_str() -> str:
-    return date.today().isoformat()
+    return datetime.now(timezone(timedelta(hours=8))).date().isoformat()
 
 
 def _merge_history(
@@ -346,12 +346,16 @@ async def add_keywords(words: list[str]):
         _dirty_keywords[word] += 1
     _check_sync()
 
-async def add_bad_case(query: str) -> None:
+async def add_bad_case(query: str, platform: str = '', settings: dict | None = None) -> None:
     global _dirty_bad_cases, _memory_bad_cases
     entry = {
         'q': query,
         't': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }
+    if platform:
+        entry['platform'] = platform
+    if settings:
+        entry['settings'] = settings
     _memory_bad_cases.insert(0, entry)
     if len(_memory_bad_cases) > MAX_BAD_CASES:
         _memory_bad_cases[:] = _memory_bad_cases[:MAX_BAD_CASES]

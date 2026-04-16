@@ -83,7 +83,7 @@ def get_host_port() -> tuple[str, int]:
     """
     if is_cloud():
         return '0.0.0.0', 7860
-    return '127.0.0.1', 1111
+    return '127.0.0.1', 11111
 
 
 def nsfw_allowed() -> bool:

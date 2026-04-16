@@ -83,6 +83,13 @@ def apply_nsfw_filter(rows: list[dict], show_nsfw: bool) -> list[dict]:
     return result
 
 
+def _format_tag_with_weight(tag: str, weight: float) -> str:
+    """格式化单个标签，权重 1.0 时输出原始标签，否则输出 (tag:weight) 格式。"""
+    if weight == 1.0:
+        return tag
+    return f'({tag}:{weight:.1f})'
+
+
 # ── UI 类 ─────────────────────────────────────────────────────────────────────
 
 class DanbooruSearchUI:
@@ -99,9 +106,13 @@ class DanbooruSearchUI:
         self.related_list_container = None  # 右栏关联推荐列表
         self.results_section = None        # 整个结果区域（搜索前隐藏）
         self.selection_count_label = None
-        self.selected_display = None
+        self.selected_display = None       # 已废弃 textarea，保留兼容
+        self.selected_chips_container = None  # 已选标签 chip 容器
         self.current_related: list = []
         self.chip_extra_selected: set = set()
+
+        # tag -> prompt 权重，范围 [0.1, 1.9]，默认 1.0
+        self.tag_weights: dict[str, float] = {}
 
         self.init_banner = None
         self.input_top_k = None
@@ -174,6 +185,20 @@ class DanbooruSearchUI:
                 .related-item:hover { background-color: rgba(74, 144, 226, 0.04); }
                 .tag-link { text-decoration: none; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; }
                 .tag-link:hover { text-decoration: underline; }
+                .weight-chip { display: inline-flex; align-items: center; gap: 2px;
+                               border-radius: 16px; padding: 2px 6px 2px 4px;
+                               background: #e3edf7; border: 1px solid #b3cde8;
+                               font-size: 12px; margin: 3px; white-space: nowrap; }
+                .weight-chip.boosted  { background: #fff3e0; border-color: #ffb74d; }
+                .weight-chip.reduced  { background: #f3e5f5; border-color: #ce93d8; }
+                .weight-btn { cursor: pointer; width: 18px; height: 18px; border-radius: 50%;
+                              display: inline-flex; align-items: center; justify-content: center;
+                              font-size: 13px; font-weight: bold; line-height: 1;
+                              border: none; background: rgba(0,0,0,0.08);
+                              color: #555; transition: background 0.15s; padding: 0; }
+                .weight-btn:hover { background: rgba(0,0,0,0.18); }
+                .weight-label { font-family: Consolas, Monaco, monospace; font-size: 11px;
+                                color: #888; min-width: 28px; text-align: center; }
 
                 /* 强制双栏并排 */
                 .two-col-layout {
@@ -403,6 +428,12 @@ class DanbooruSearchUI:
                     ui.label('已选标签').classes('font-bold text-primary')
                     self.selection_count_label = ui.label('0').classes(
                         'bg-primary text-white px-2 rounded-full text-sm')
+                    with ui.icon('info_outline', size='sm', color='grey').classes('cursor-help'):
+                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                            ui.html(
+                                '点击 <b>−</b> / <b>+</b> 可调整标签权重（步长 0.1，范围 0.1~1.9）。<br>'
+                                '权重 1.0 时输出原始标签；其余输出 <code>(tag:1.2)</code> 格式。'
+                            ).style('font-size:14px;line-height:1.6;')
 
                 with ui.row().classes('items-center gap-2'):
                     with ui.button('没搜到？', icon='help_outline').props('dense flat color=grey-6').classes('text-sm') as _bad_btn:
@@ -414,10 +445,75 @@ class DanbooruSearchUI:
                     copy_btn = ui.button('复制选中', icon='content_copy').props('dense unelevated color=primary')
                     copy_btn.on_click(self.copy_selection)
 
-            self.selected_display = ui.textarea().classes('w-full mt-2') \
-                .props('outlined dense rows=2 readonly bg-white')
+            # chip 容器：每个已选标签渲染为一个带加减按钮的 chip
+            self.selected_chips_container = ui.element('div').classes(
+                'w-full mt-2 min-h-10 p-1 rounded bg-white border border-blue-100 flex flex-wrap'
+            )
 
-    # ── 两栏结果（CSS 强制并排）──────────────────────────────────────────
+    def _render_selected_chips(self):
+        """重新渲染已选标签的 chip 列表。"""
+        if self.selected_chips_container is None:
+            return
+        self.selected_chips_container.clear()
+        tags = self._get_selected_tags()
+        if not tags:
+            with self.selected_chips_container:
+                ui.label('暂无已选标签').classes('text-xs text-gray-400 italic p-2 self-center')
+            return
+        with self.selected_chips_container:
+            for tag in tags:
+                w = self.tag_weights.get(tag, 1.0)
+                extra_cls = 'boosted' if w > 1.0 else ('reduced' if w < 1.0 else '')
+                w_str = f'{w:.1f}'
+                with ui.element('div').classes(f'weight-chip {extra_cls}'):
+                    # 删除按钮（×）
+                    with ui.element('button').classes('weight-btn').props(f'title="移除 {tag}"').on(
+                        'click', lambda t=tag: self._remove_selected_tag(t)
+                    ):
+                        ui.html('&times;')
+                    # 减号
+                    with ui.element('button').classes('weight-btn').on(
+                        'click', lambda t=tag: self._adjust_weight(t, -0.1)
+                    ):
+                        ui.html('&minus;')
+                    # 标签名
+                    ui.label(tag).style(
+                        'font-family:Consolas,Monaco,monospace;font-size:12px;'
+                        'color:#2c5282;max-width:150px;overflow:hidden;'
+                        'text-overflow:ellipsis;white-space:nowrap;'
+                    )
+                    # 权重值（仅非 1.0 时显示）
+                    if w != 1.0:
+                        ui.label(w_str).classes('weight-label').style('color:#e65100;font-weight:bold;')
+                    # 加号
+                    with ui.element('button').classes('weight-btn').on(
+                        'click', lambda t=tag: self._adjust_weight(t, +0.1)
+                    ):
+                        ui.html('&plus;')
+
+    def _adjust_weight(self, tag: str, delta: float):
+        """调整单个标签权重，钳位到 [0.1, 1.9]。"""
+        current = self.tag_weights.get(tag, 1.0)
+        new_w = round(current + delta, 1)
+        if new_w < 0.1:
+            ui.notify('权重范围为 0.1 ~ 1.9，已到达最小值', type='warning', timeout=2000)
+            return
+        if new_w > 1.9:
+            ui.notify('权重范围为 0.1 ~ 1.9，已到达最大值', type='warning', timeout=2000)
+            return
+        self.tag_weights[tag] = new_w
+        self._render_selected_chips()
+
+    def _remove_selected_tag(self, tag: str):
+        """从已选中移除标签（同步表格选中状态）。"""
+        self._mark_interaction()
+        current = self._get_selected_tags()
+        if tag in current:
+            current.remove(tag)
+        self.tag_weights.pop(tag, None)
+        self._set_selected_tags(current)
+
+        # ── 两栏结果（CSS 强制并排）──────────────────────────────────────────
 
     def _build_results_columns(self):
         with ui.element('div').classes('w-full two-col-layout'):
@@ -710,6 +806,9 @@ class DanbooruSearchUI:
             # 填充表格
             self.result_table.rows = apply_nsfw_filter(table_data, show_nsfw_val)
             self.result_table.selected = []
+            self.tag_weights.clear()
+            self.chip_extra_selected.clear()
+            self._render_selected_chips()
             self._update_selection_display(None)
 
             # 清空关联推荐
@@ -771,15 +870,18 @@ class DanbooruSearchUI:
         table_tag_set = {row['tag'] for row in self.result_table.rows} if self.result_table else set()
         self.chip_extra_selected.clear()
         self.chip_extra_selected.update(t for t in tag_set if t not in table_tag_set)
+        # clean up weights for deselected tags
+        for t in list(self.tag_weights):
+            if t not in tag_set:
+                del self.tag_weights[t]
 
         if self.result_table is not None:
             self.result_table.selected = [row for row in self.result_table.rows if row.get('tag') in tag_set]
 
         all_tags = self._get_selected_tags()
-        if self.selected_display is not None:
-            self.selected_display.value = ', '.join(all_tags)
         if self.selection_count_label is not None:
             self.selection_count_label.text = str(len(all_tags))
+        self._render_selected_chips()
 
     def _update_selection_display(self, _e):
         if self.result_table is None:
@@ -787,9 +889,18 @@ class DanbooruSearchUI:
         self._mark_interaction()
 
         all_tags = self._get_selected_tags()
-        self.selected_display.value = ", ".join(all_tags)
+        # clean up weights for deselected tags
+        tag_set = set(all_tags)
+        for t in list(self.tag_weights):
+            if t not in tag_set:
+                del self.tag_weights[t]
+        # init weight for newly selected tags
+        for t in all_tags:
+            self.tag_weights.setdefault(t, 1.0)
+
         if self.selection_count_label is not None:
             self.selection_count_label.text = str(len(all_tags))
+        self._render_selected_chips()
 
         show_nsfw_val = self.input_nsfw.value
         if all_tags:
@@ -804,11 +915,13 @@ class DanbooruSearchUI:
         if checked:
             if tag not in current:
                 current.append(tag)
+                self.tag_weights.setdefault(tag, 1.0)
                 self._set_selected_tags(current)
                 ui.notify(f'已添加 {tag}', type='positive', timeout=1500)
         else:
             if tag in current:
                 current.remove(tag)
+                self.tag_weights.pop(tag, None)
                 self._set_selected_tags(current)
                 ui.notify(f'已移除 {tag}', type='warning', timeout=1500)
 
@@ -878,7 +991,9 @@ class DanbooruSearchUI:
 
     def copy_selection(self):
         self._mark_interaction()
-        ui.clipboard.write(self.selected_display.value)
+        tags = self._get_selected_tags()
+        prompt = ', '.join(_format_tag_with_weight(t, self.tag_weights.get(t, 1.0)) for t in tags)
+        ui.clipboard.write(prompt)
         ui.notify('已复制选中标签!', type='positive')
 
         async def silent_copy_update():
@@ -899,6 +1014,7 @@ class DanbooruSearchUI:
             ui.notify('暂无标签可复制', type='warning')
 
     async def report_bad_case(self):
+        from platform_utils import PLATFORM
         query = self.current_query_str.strip()
         if len(query) <= 1:
             ui.notify('搜索词太短，无法提交反馈。', type='warning', timeout=2000)
@@ -906,14 +1022,18 @@ class DanbooruSearchUI:
         if self.bad_case_btn is not None:
             self.bad_case_btn.disable()
         try:
-            await counter.add_bad_case(query)
+            settings = {
+                'top_k': int(self.input_top_k.value) if self.input_top_k else None,
+                'segmentation': self.input_segment.value if self.input_segment else None,
+                'nsfw': self.input_nsfw.value if self.input_nsfw else None,
+            }
+            await counter.add_bad_case(query, platform=PLATFORM, settings=settings)
             ui.notify('感谢反馈！我们会持续优化。', type='positive', timeout=3000)
         except Exception as e:
             print(f'[UI] bad_case 记录异常: {e}')
             ui.notify('记录失败，请稍后再试。', type='warning', timeout=3000)
             if self.bad_case_btn is not None:
                 self.bad_case_btn.enable()
-
 
 # ── 页面路由 ───────────────────────────────────────────────────────────────────
 
