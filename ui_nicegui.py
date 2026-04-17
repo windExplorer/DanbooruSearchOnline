@@ -359,7 +359,7 @@ class DanbooruSearchUI:
             with ui.row().classes('w-full gap-6 items-center mt-3 flex-wrap'):
                 with ui.row().classes('items-center gap-2'):
                     ui.label('Top K (语义相关)').classes('text-sm text-gray-600')
-                    self.input_top_k = ui.number(value=5, min=1, max=50).classes('w-20') \
+                    self.input_top_k = ui.number(value=10, min=1, max=200).classes('w-20') \
                         .props('outlined dense')
 
                 with ui.row().classes('items-center gap-2'):
