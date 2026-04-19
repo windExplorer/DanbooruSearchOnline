@@ -54,6 +54,10 @@ OPTIONAL_COLS = {
     'source':   {'name': 'source',         'label': '匹配来源', 'field': 'source'},
 }
 
+# localStorage key 与配置版本，版本变更时自动丢弃旧配置
+_CONFIG_LS_KEY = 'danbooru_search_config'
+_CONFIG_VERSION = 3
+
 
 # ── 辅助函数 ───────────────────────────────────────────────────────────────────
 
@@ -146,6 +150,10 @@ class DanbooruSearchUI:
         # 关联推荐的 checkbox 引用
         self._related_checkboxes: dict[str, ui.checkbox] = {}
 
+        # 高级选项中各层/类型的 checkbox 引用，用于 restore 时同步控件状态
+        self._layer_checkboxes: dict[str, ui.checkbox] = {}
+        self._cat_checkboxes: dict[str, ui.checkbox] = {}
+
     def _update_footer_text(self):
         if self.search_count_label is not None:
             try:
@@ -172,6 +180,124 @@ class DanbooruSearchUI:
                 except Exception:
                     pass
             asyncio.create_task(silent_success_update())
+
+    # ── 分页辅助 ──────────────────────────────────────────────────────────
+
+    def _get_rows_per_page(self) -> int:
+        if self.result_table is None:
+            return 10
+        p = self.result_table.pagination
+        # pagination 可能是 int 或 dict
+        if isinstance(p, dict):
+            return int(p.get('rowsPerPage', 10))
+        return int(p) if p else 10
+
+    def _set_rows_per_page(self, value: int):
+        if self.result_table is None:
+            return
+        allowed = {5, 7, 10, 15, 20, 25, 50, 0}  # 0 = All
+        value = value if value in allowed else 10
+        p = self.result_table.pagination
+        if isinstance(p, dict):
+            p['rowsPerPage'] = value
+            self.result_table.pagination = p
+        else:
+            self.result_table.pagination = value
+
+    # ── 配置持久化 ────────────────────────────────────────────────────────
+
+    def _save_config(self):
+        """将当前控件状态序列化并写入 localStorage。"""
+        cfg = {
+            'version': _CONFIG_VERSION,
+            'top_k': int(self.input_top_k.value) if self.input_top_k else 10,
+            'limit': int(self.input_limit.value) if self.input_limit else 80,
+            'popularity_weight': float(self.input_weight.value) if self.input_weight else 0.15,
+            'show_nsfw': bool(self.input_nsfw.value) if self.input_nsfw else False,
+            'use_segmentation': bool(self.input_segment.value) if self.input_segment else True,
+            'selected_layers': dict(self.selected_layers),
+            'selected_cats': dict(self.selected_cats),
+            'sw_semantic': bool(self.sw_semantic.value) if self.sw_semantic else False,
+            'sw_layer': bool(self.sw_layer.value) if self.sw_layer else False,
+            'sw_source': bool(self.sw_source.value) if self.sw_source else False,
+            'prompt_format': self.prompt_format,
+            'rows_per_page': self._get_rows_per_page(),
+        }
+        js = _json.dumps(cfg, ensure_ascii=False)
+        ui.run_javascript(f"localStorage.setItem('{_CONFIG_LS_KEY}', {_json.dumps(js)});")
+
+    async def _restore_config(self):
+        """从 localStorage 读取配置并恢复控件状态。"""
+        try:
+            raw = await ui.run_javascript(
+                f"localStorage.getItem('{_CONFIG_LS_KEY}');",
+                timeout=5.0,
+            )
+        except Exception:
+            return
+
+        if not raw:
+            return
+
+        try:
+            cfg = _json.loads(raw)
+        except Exception:
+            return
+
+        if cfg.get('version') != _CONFIG_VERSION:
+            # 版本不符，丢弃旧配置
+            ui.run_javascript(f"localStorage.removeItem('{_CONFIG_LS_KEY}');")
+            return
+
+        if self.input_top_k and 'top_k' in cfg:
+            self.input_top_k.set_value(cfg['top_k'])
+        if self.input_limit and 'limit' in cfg:
+            self.input_limit.set_value(cfg['limit'])
+        if self.input_weight and 'popularity_weight' in cfg:
+            self.input_weight.set_value(cfg['popularity_weight'])
+        if self.input_segment and 'use_segmentation' in cfg:
+            self.input_segment.set_value(cfg['use_segmentation'])
+
+        # NSFW：仅在平台允许时恢复
+        if nsfw_allowed() and self.input_nsfw and 'show_nsfw' in cfg:
+            self.input_nsfw.set_value(cfg['show_nsfw'])
+
+        if 'selected_layers' in cfg:
+            for layer, val in cfg['selected_layers'].items():
+                if layer in self.selected_layers:
+                    self.selected_layers[layer] = bool(val)
+                    if layer in self._layer_checkboxes:
+                        self._layer_checkboxes[layer].set_value(bool(val))
+
+        if 'selected_cats' in cfg:
+            for cat, val in cfg['selected_cats'].items():
+                if cat in self.selected_cats:
+                    self.selected_cats[cat] = bool(val)
+                    if cat in self._cat_checkboxes:
+                        self._cat_checkboxes[cat].set_value(bool(val))
+
+        if self.sw_semantic and 'sw_semantic' in cfg:
+            self.sw_semantic.set_value(cfg['sw_semantic'])
+        if self.sw_layer and 'sw_layer' in cfg:
+            self.sw_layer.set_value(cfg['sw_layer'])
+        if self.sw_source and 'sw_source' in cfg:
+            self.sw_source.set_value(cfg['sw_source'])
+
+        if 'prompt_format' in cfg and cfg['prompt_format'] in ('sdxl', 'nai'):
+            self.prompt_format = cfg['prompt_format']
+            if self.format_toggle_btn:
+                if self.prompt_format == 'nai':
+                    self.format_toggle_btn.text = 'NAI'
+                    self.format_toggle_btn.props('color=purple-7')
+                else:
+                    self.format_toggle_btn.text = 'SDXL'
+                    self.format_toggle_btn.props('color=grey-7')
+
+        if 'rows_per_page' in cfg:
+            self._set_rows_per_page(cfg['rows_per_page'])
+
+        # 若高级选项列有变更，同步更新表格列
+        self._update_table_columns()
 
     # ══════════════════════════════════════════════════════════════════════
     # 页面构建
@@ -398,10 +524,11 @@ class DanbooruSearchUI:
                                 '释义': '维基释义', '中文核心词': '中文核心词',
                             }
                             for layer in ['英文', '中文扩展词', '释义', '中文核心词']:
-                                ui.checkbox(
+                                cb = ui.checkbox(
                                     display_map.get(layer, layer), value=True,
                                     on_change=lambda e, l=layer: self.selected_layers.__setitem__(l, e.value)
                                 ).props('color=primary dense')
+                                self._layer_checkboxes[layer] = cb
 
                         with ui.column().classes('gap-2'):
                             ui.label('类型筛选').classes('font-bold text-sm text-gray-700')
@@ -412,10 +539,11 @@ class DanbooruSearchUI:
                                 'Character': '角色 (Character)',
                             }
                             for cat in ['General', 'Copyright', 'Character']:
-                                ui.checkbox(
+                                cb = ui.checkbox(
                                     label_map[cat], value=True,
                                     on_change=lambda e, c=cat: self.selected_cats.__setitem__(c, e.value)
                                 ).props(f'color={color_map[cat]} dense')
+                                self._cat_checkboxes[cat] = cb
 
                         with ui.column().classes('gap-2'):
                             ui.label('表格显示列').classes('font-bold text-sm text-gray-700')
@@ -552,6 +680,7 @@ class DanbooruSearchUI:
                 ).classes('w-full')
                 self.result_table.on('selection', self._update_selection_display)
                 self.result_table.on('link_click', self._mark_interaction)
+                self.result_table.on('pagination', lambda _: self._save_config())
 
                 # 自定义行模板：行背景色按分类，整行悬浮显示 wiki（NSFW模糊行除外）
                 self.result_table.add_slot('body', r'''
@@ -631,6 +760,7 @@ class DanbooruSearchUI:
                 self.related_list_container = ui.column().classes('w-full gap-0')
                 with self.related_list_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
+
     # ══════════════════════════════════════════════════════════════════════
     # 渲染关联推荐列表
     # ══════════════════════════════════════════════════════════════════════
@@ -765,6 +895,9 @@ class DanbooruSearchUI:
         if not query:
             return
 
+        # 搜索前保存配置
+        self._save_config()
+
         self.current_query_str = query
         self.search_btn.disable()
         self.spinner.classes(remove='hidden')
@@ -822,8 +955,9 @@ class DanbooruSearchUI:
             # 显示结果区域
             self.results_section.set_visibility(True)
 
-            # 填充表格
+            _saved_rpp = self._get_rows_per_page()
             self.result_table.rows = apply_nsfw_filter(table_data, show_nsfw_val)
+            self._set_rows_per_page(_saved_rpp)
             self.result_table.selected = []
             self.tag_weights.clear()
             self.chip_extra_selected.clear()
@@ -1084,6 +1218,9 @@ async def main_page():
         except Exception:
             pass
     asyncio.create_task(silent_visit_update())
+
+    # 恢复用户配置（在页面渲染完成后执行）
+    await app_ui._restore_config()
 
 
 # ── 入口 ───────────────────────────────────────────────────────────────────────
