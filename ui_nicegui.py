@@ -185,18 +185,18 @@ class DanbooruSearchUI:
 
     def _get_rows_per_page(self) -> int:
         if self.result_table is None:
-            return 10
+            return 0
         p = self.result_table.pagination
         # pagination 可能是 int 或 dict
         if isinstance(p, dict):
-            return int(p.get('rowsPerPage', 10))
-        return int(p) if p else 10
+            return int(p.get('rowsPerPage', 0))
+        return int(p) if p else 0
 
     def _set_rows_per_page(self, value: int):
         if self.result_table is None:
             return
         allowed = {5, 7, 10, 15, 20, 25, 50, 0}  # 0 = All
-        value = value if value in allowed else 10
+        value = value if value in allowed else 0
         p = self.result_table.pagination
         if isinstance(p, dict):
             p['rowsPerPage'] = value
@@ -453,7 +453,7 @@ class DanbooruSearchUI:
 - **标签范围**：仅显示特征、角色与作品标签，且频数须 ≥ 100 (General, Character & Copyright only, Freq ≥ 100)
 - **ComfyUI 插件**：[ComfyUI-DanbooruSearcher](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher)
 - **API 服务**：[接口文档](/api/docs)
-- **支持作者**：如果觉得好用，欢迎点击顶部给本 Space 点个 **Like ❤️**，或前往 [GitHub](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher) 点个 **Star ⭐**！
+- **支持作者**：如果觉得好用，欢迎点击顶部给本 Space 点个 **Like ❤️**，或前往 [GitHub](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline) 点个 **Star ⭐**！
 - **🚀 首次使用？[点击查看使用指南](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)**，了解五种搜索模式与进阶技巧
 """).classes('text-sm text-gray-800 px-4 pb-3')
 
@@ -674,7 +674,7 @@ class DanbooruSearchUI:
                 self.result_table = ui.table(
                     columns=TABLE_COLUMNS,
                     rows=[],
-                    pagination=10,
+                    pagination=0,
                     selection='multiple',
                     row_key='tag',
                 ).classes('w-full')

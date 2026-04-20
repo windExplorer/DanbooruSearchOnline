@@ -60,6 +60,14 @@ STOP_WORDS: frozenset[str] = frozenset({
     '很', '太', '更', '最', '挺', '特', '好', '真',
     '一', '一个', '一种', '一下', '一点', '一些',
     '有', '无', '非', '没', '不',
+    '正在', '已经', '正', '刚', '开始', '继续', '一直', '不断',
+    '穿着', '戴着', '穿', '戴',
+    '带有', '具有', '拥有',
+    '看起来', '看上去', '显得', '仿佛', '似乎',
+    '十分', '非常', '特别', '比较',
+    '图片', '画面', '图像',
+    '位于', '处于',
+    '许多', '大量', '各种', '所有', '其他', '其它'
 })
 
 CAT_MAP: dict[str, str] = {
@@ -284,8 +292,26 @@ class DanbooruTagger:
                         wiki=str(row.get('wiki', '')),
                     )
 
+        # 收集每个查询源的 top-1 结果（高于阈值）
+        guaranteed_tags: set[str] = set()
+        for source_word in queries:
+            best: TagResult | None = None
+            for r in final.values():
+                if r.source == source_word and r.final_score > 0.45:
+                    if best is None or r.final_score > best.final_score:
+                        best = r
+            if best is not None:
+                guaranteed_tags.add(best.tag)
+
+        # 对所有候选进行排序，然后在保留保证结果的同时截断至限制数量
         sorted_results = sorted(final.values(), key=lambda r: r.final_score, reverse=True)
-        valid    = [r for r in sorted_results if r.final_score > 0.45][: request.limit]
+        valid: list[TagResult] = []
+        for r in sorted_results:
+            if r.final_score <= 0.45:
+                continue
+            if len(valid) < request.limit or r.tag in guaranteed_tags:
+                valid.append(r)
+
         tags_all = ', '.join(r.tag for r in valid)
         tags_sfw = ', '.join(r.tag for r in valid if r.nsfw != '1')
         return SearchResponse(

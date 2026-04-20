@@ -13,3 +13,5 @@ tempsave/
 *.env
 *.png
 *.bat
+eval/
+legacy_history.json
