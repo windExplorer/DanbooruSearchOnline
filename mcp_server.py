@@ -27,7 +27,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 mcp = FastMCP(
     name="danbooru-searcher",
-    transport_security=TransportSecuritySettings(allowed_hosts=["*"]),
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 
