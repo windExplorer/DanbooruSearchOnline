@@ -1,6 +1,6 @@
 """
 platform_utils.py
-─────────────────
+
 统一的平台检测与 Hub 操作封装。
 
 支持平台：
@@ -18,35 +18,34 @@ platform_utils.py
   get_counter_cfg() : 返回 CounterConfig（platform / available）
 
 环境变量约定：
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │ HuggingFace Space（由 HF 自动注入）                                  │
-  │   SPACE_ID          Space 唯一标识，存在即代表在 HF 环境            │
-  │   SPACE_AUTHOR_NAME 作者名                                           │
-  │                                                                      │
-  │ 用户手动配置（HF Secrets）：                                         │
-  │   HF_TOKEN          HF 访问令牌（仅用于 download_file，非计数器）    │
-  ├──────────────────────────────────────────────────────────────────────┤
-  │ ModelScope 创空间（由魔搭自动注入）                                   │
-  │   MODELSCOPE_ENVIRONMENT  存在即代表在魔搭环境（值通常为 "studio"）  │
-  │   STUDIO_ID               创空间 ID（备用检测）                      │
-  │                                                                      │
-  │ 魔搭平台数据文件说明：                                                │
-  │   数据文件（CSV / parquet / safetensors）直接放在创空间 studio repo  │
-  │   中，容器启动时会自动同步到工作目录，download_file() 在 MS 平台     │
-  │   直接返回本地路径，无需额外配置 Model repo。                         │
-  ├──────────────────────────────────────────────────────────────────────┤
-  │ 阿里云 OSS（计数器唯一后端，HF 与 MS 共享同一数据）                  │
-  │                                                                      │
-  │   OSS_ACCESS_KEY_ID      RAM 子账号 AccessKey ID                    │
-  │   OSS_ACCESS_KEY_SECRET  RAM 子账号 AccessKey Secret                │
-  │   OSS_ENDPOINT           Bucket 所在地域节点                         │
-  │                          例: oss-cn-hangzhou.aliyuncs.com           │
-  │                          （无需加 https://，代码自动拼接）            │
-  │   OSS_BUCKET_NAME        Bucket 名称                                 │
-  │   OSS_COUNTER_DIR        计数文件在 Bucket 中的前缀目录（可选）       │
-  │                          默认 "danbooru_counter"                    │
-  │                          最终路径: {OSS_COUNTER_DIR}/count.json     │
-  └──────────────────────────────────────────────────────────────────────┘
+  
+   HuggingFace Space（由 HF 自动注入）                                  
+     SPACE_ID          Space 唯一标识，存在即代表在 HF 环境            
+     SPACE_AUTHOR_NAME 作者名                                           
+                                                                        
+   用户手动配置（HF Secrets）：                                         
+     HF_TOKEN          HF 访问令牌（仅用于 download_file，非计数器）    
+
+   ModelScope 创空间（由魔搭自动注入）                                   
+     MODELSCOPE_ENVIRONMENT  存在即代表在魔搭环境（值通常为 "studio"）  
+     STUDIO_ID               创空间 ID（备用检测）                      
+                                                                        
+   魔搭平台数据文件说明：                                                
+     数据文件（CSV / parquet / safetensors）直接放在创空间 studio repo  
+     中，容器启动时会自动同步到工作目录，download_file() 在 MS 平台     
+     直接返回本地路径，无需额外配置 Model repo。                         
+
+   阿里云 OSS（计数器唯一后端，HF 与 MS 共享同一数据）                  
+                                                                        
+     OSS_ACCESS_KEY_ID      RAM 子账号 AccessKey ID                    
+     OSS_ACCESS_KEY_SECRET  RAM 子账号 AccessKey Secret                
+     OSS_ENDPOINT           Bucket 所在地域节点                         
+                            例: oss-cn-hangzhou.aliyuncs.com           
+                            （无需加 https://，代码自动拼接）            
+     OSS_BUCKET_NAME        Bucket 名称                                 
+     OSS_COUNTER_DIR        计数文件在 Bucket 中的前缀目录（可选）       
+                            默认 "danbooru_counter"                    
+                            最终路径: {OSS_COUNTER_DIR}/count.json
 """
 
 from __future__ import annotations
@@ -58,7 +57,7 @@ from pathlib import Path
 import oss2
 from typing import Literal, Optional
 
-# ── 平台检测 ─────────────────────────────────────────────────────────────────
+#  平台检测 
 
 def _detect_platform() -> Literal['hf', 'ms', 'local']:
     if os.environ.get('SPACE_ID'):
@@ -97,7 +96,7 @@ def nsfw_allowed() -> bool:
     return PLATFORM != 'ms'
 
 
-# ── 阿里云 OSS ────────────────────────────────────────────────────────────────
+#  阿里云 OSS 
 
 def _get_oss_bucket():
     """
@@ -131,7 +130,7 @@ def _oss_available() -> bool:
     return _get_oss_bucket() is not None
 
 
-# ── 计数器配置 ────────────────────────────────────────────────────────────────
+#  计数器配置 
 
 @dataclass
 class CounterConfig:
@@ -154,7 +153,7 @@ def get_counter_cfg() -> CounterConfig:
     return CounterConfig(platform='local')
 
 
-# ── 计数器读写（OSS）─────────────────────────────────────────────────────────
+#  计数器读写（OSS）
 
 def read_bytes(filename: str, cfg: CounterConfig) -> Optional[bytes]:
     """
@@ -209,7 +208,7 @@ def upload_bytes(
     return False
 
 
-# ── 文件下载（引擎数据文件，与计数器无关）────────────────────────────────────
+#  文件下载（引擎数据文件，与计数器无关）
 
 # 魔搭创空间工作目录，studio repo 的文件会被同步到此处
 _MS_WORKDIR = Path('/home/user/app')
@@ -266,7 +265,7 @@ def download_file(
     return filename
 
 
-# ── 模型路径解析 ───────────────────────────────────────────────────────────────
+#  模型路径解析 
 
 LOCAL_MODEL_PATH = 'my_model_bge_m3'
 HF_MODEL_ID      = 'BAAI/bge-m3'

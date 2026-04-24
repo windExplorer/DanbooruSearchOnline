@@ -26,16 +26,13 @@ def _excepthook(exc_type, exc_value, exc_tb):
 
 sys.excepthook = _excepthook
 
-try:
-    from nicegui import ui, app, run
-    from core import counter
-    from api_fastapi import app as api_app
-    from core.engine import DanbooruTagger
-    from core.models import RelatedTag, SearchRequest
-    from platform_utils import is_cloud, get_host_port, nsfw_allowed
-except Exception:
-    traceback.print_exc()
-    raise
+from nicegui import ui, app, run
+from core import counter
+from api_fastapi import app as api_app
+from core.engine import DanbooruTagger
+from core.models import RelatedTag, SearchRequest
+from platform_utils import is_cloud, get_host_port, nsfw_allowed
+from mcp_server import mcp
 
 
 # ── 表格列定义 ─────────────────────────────────────────────────────────────────
@@ -1251,6 +1248,7 @@ if __name__ in {'__main__', '__mp_main__'}:
             print(f"[UI] 关机同步失败: {e}")
 
     app.mount('/api', api_app)
+    app.mount('/mcp', mcp.streamable_http_app())
 
     @app.get('/googlebd34b54f8562aa06.html')
     def google_verification():
