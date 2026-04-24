@@ -1256,10 +1256,19 @@ if __name__ in {'__main__', '__mp_main__'}:
     app.mount('/mcp', mcp_app)
     @app.on_startup
     async def _start_mcp():
-        await mcp_app.router.startup()
+        print(f"[MCP] router type: {type(mcp_app.router)}", flush=True)
+        print(f"[MCP] router attrs: {[a for a in dir(mcp_app.router) if not a.startswith('_')]}", flush=True)
+        router = mcp_app.router
+        if hasattr(router, 'startup'):
+            await router.startup()
+        elif hasattr(router, 'lifespan_context'):
+            async with router.lifespan_context(mcp_app):
+                pass
     @app.on_shutdown
     async def _stop_mcp():
-        await mcp_app.router.shutdown()
+        router = mcp_app.router
+        if hasattr(router, 'shutdown'):
+            await router.shutdown()
 
     @app.get('/googlebd34b54f8562aa06.html')
     def google_verification():
