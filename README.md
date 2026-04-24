@@ -316,6 +316,87 @@ POST /api/related
 
 ---
 
+## MCP 接口
+
+本工具提供 MCP（Model Context Protocol）服务，支持将搜索引擎直接接入 Claude Desktop、Cursor、Cherry Studio 等支持 MCP 协议的大模型客户端，让 AI 能够在对话中直接调用标签搜索能力。
+
+**MCP 服务地址：**
+```
+https://sakizuki-danboorusearch.hf.space/mcp/mcp
+```
+
+### 接入方法
+
+**方法一：JSON 配置文件（Claude Desktop / Cursor 等）**
+
+在客户端的 MCP 配置文件中添加以下内容：
+
+```json
+{
+  "mcpServers": {
+    "danbooru-searcher": {
+      "url": "https://sakizuki-danboorusearch.hf.space/mcp/mcp"
+    }
+  }
+}
+```
+
+各客户端配置文件路径：
+- Claude Desktop（Windows）：`%APPDATA%\Claude\claude_desktop_config.json`
+- Claude Desktop（macOS）：`~/Library/Application Support/Claude/claude_desktop_config.json`
+- Cursor：参考官方文档的 MCP 配置入口
+
+**方法二：图形界面（Cherry Studio 等）**
+
+在 MCP 服务器管理页面点击「添加」，填写以下信息：
+
+- 名称：`danbooru-searcher`（可自定义）
+- 类型：`Streamable HTTP`
+- URL：`https://sakizuki-danboorusearch.hf.space/mcp/mcp`
+
+> 注意：类型务必选择 **Streamable HTTP**，不要选 SSE，否则工具列表无法正常加载。
+
+添加完成后重启客户端，或在 MCP 管理界面手动刷新连接。
+
+### 可用工具
+
+接入后 AI 可调用以下两个工具：
+
+**`search_tags`** — 自然语言搜索标签
+
+接受中文或英文描述，返回匹配的 Danbooru 标签列表和可直接用于 AI 绘画的 prompt 字符串。支持参数：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `query` | — | 自然语言描述（必填） |
+| `use_segmentation` | `true` | 智能分词开关，完整画面描述时开启，精确查词时关闭 |
+| `top_k` | `5` | 每个分词的语义召回数量，发散探索时调高至 80~160 |
+| `limit` | `80` | 返回标签总数上限 |
+| `popularity_weight` | `0.15` | 热度权重，控制高频标签的排名影响 |
+| `show_nsfw` | `false` | 是否包含 NSFW 标签 |
+
+**`get_related_tags`** — 共现关联推荐
+
+给定一组已选标签，返回在 Danbooru 图库中与之最常共现的相关标签，基于 NPMI 评分，可有效过滤掉仅因自身热度高而频繁出现的标签。
+
+### 调用示例
+
+接入后，你可以直接用自然语言告诉 AI 你的需求，AI 会自动选择合适的参数调用工具：
+
+> 帮我把「一个穿白色水手服的少女在大雨中奔跑，表情愤怒、流泪，衣服湿透」转换成 Danbooru 标签 prompt
+
+> 我想找「机械义肢」相关的标签，帮我发散一下
+
+> 帮我查一下「命运石之门的助手」对应的角色标签是什么
+
+> 我已经选了 `white_serafuku` 和 `rain` 这两个标签，帮我推荐一些常见的搭配标签
+
+### 注意事项
+
+HF Space 在无流量时会进入休眠状态，首次请求需要等待冷启动（约 30~60 秒）。若 AI 调用超时，稍等片刻后重试即可，或先访问 [Space 页面](https://huggingface.co/spaces/SAkizuki/DanbooruSearch) 将其唤醒。
+
+---
+
 ## 数据库说明
 
 - 数据来源：Danbooru API 抓取
