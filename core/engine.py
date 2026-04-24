@@ -240,7 +240,7 @@ class DanbooruTagger:
             keywords = []
             queries  = [request.query]
 
-        q_emb = self.model.encode(queries, convert_to_tensor=True).float()
+        q_emb = self.model.encode(queries, convert_to_tensor=True, show_progress_bar=False).float()
         empty = [[] for _ in queries]
         tl    = request.target_layers
         k     = request.top_k
@@ -454,7 +454,7 @@ class DanbooruTagger:
 
     def _encode_texts(self, texts: list[str]) -> torch.Tensor:
         return self.model.encode(
-            texts, batch_size=64, show_progress_bar=len(texts) > 500, convert_to_tensor=True,
+            texts, batch_size=64, show_progress_bar=False, convert_to_tensor=True,
         ).float()
 
     def _load_model(self) -> None:
