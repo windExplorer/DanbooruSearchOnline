@@ -24,8 +24,7 @@ from core.engine import DanbooruTagger
 from core.models import SearchRequest
 
 mcp = FastMCP(
-    name="danbooru-searcher",
-    description="Search Danbooru tags by natural language and get co-occurrence recommendations.",
+    name="danbooru-searcher"
 )
 
 

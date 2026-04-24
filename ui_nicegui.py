@@ -34,6 +34,9 @@ from core.models import RelatedTag, SearchRequest
 from platform_utils import is_cloud, get_host_port, nsfw_allowed
 from mcp_server import mcp
 
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
 # ── 表格列定义 ─────────────────────────────────────────────────────────────────
 
@@ -1248,7 +1251,19 @@ if __name__ in {'__main__', '__mp_main__'}:
             print(f"[UI] 关机同步失败: {e}")
 
     app.mount('/api', api_app)
-    app.mount('/mcp', mcp.streamable_http_app())
+    mcp_app = mcp.streamable_http_app()
+    app.mount('/mcp', mcp_app)
+
+
+    @app.on_startup
+    async def _start_mcp():
+        await mcp_app.router.startup()
+
+
+    @app.on_shutdown
+    async def _stop_mcp():
+        await mcp_app.router.shutdown()
+
 
     @app.get('/googlebd34b54f8562aa06.html')
     def google_verification():
