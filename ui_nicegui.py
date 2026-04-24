@@ -1251,19 +1251,15 @@ if __name__ in {'__main__', '__mp_main__'}:
             print(f"[UI] 关机同步失败: {e}")
 
     app.mount('/api', api_app)
+
     mcp_app = mcp.streamable_http_app()
     app.mount('/mcp', mcp_app)
-
-
     @app.on_startup
     async def _start_mcp():
         await mcp_app.router.startup()
-
-
     @app.on_shutdown
     async def _stop_mcp():
         await mcp_app.router.shutdown()
-
 
     @app.get('/googlebd34b54f8562aa06.html')
     def google_verification():
