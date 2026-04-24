@@ -22,10 +22,14 @@ import asyncio
 from mcp.server.fastmcp import FastMCP
 from core.engine import DanbooruTagger
 from core.models import SearchRequest
+from mcp.server.transport_security import TransportSecuritySettings
+
 
 mcp = FastMCP(
-    name="danbooru-searcher"
+    name="danbooru-searcher",
+    transport_security=TransportSecuritySettings(allowed_hosts=["*"]),
 )
+
 
 
 @mcp.tool()
