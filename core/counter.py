@@ -172,11 +172,11 @@ def _sync_remote_task(
             0, BASE_VISITS, BASE_COPIES, 0, 0, {}, [], []
         )
 
-    n_total     = r_total     + adds_count
-    n_visits    = r_visits    + adds_visits
-    n_copies    = r_copies    + adds_copies
-    n_mcp       = r_mcp       + adds_mcp
-    n_successes = r_successes + adds_successes
+    n_total     = max(r_total,     r_total     + adds_count)
+    n_visits    = max(r_visits,    r_visits    + adds_visits)
+    n_copies    = max(r_copies,    r_copies    + adds_copies)
+    n_mcp       = max(r_mcp,       r_mcp       + adds_mcp)
+    n_successes = max(r_successes, r_successes + adds_successes)
 
     merged_keywords = Counter(r_keywords)
     for word, count in adds_keywords.items():
