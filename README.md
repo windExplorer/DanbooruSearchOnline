@@ -14,6 +14,8 @@ tags:
   - stable-diffusion
   - danbooru
   - nlp
+thumbnail: >-
+    https://akizukipic.oss-cn-beijing.aliyuncs.com/img/202604022117025.png
 ---
 
 # Danbooru Tags Searcher
@@ -312,7 +314,7 @@ POST /api/related
 }
 ```
 
-详见：[API 文档](/api/docs)
+详见：[API 文档](https://sakizuki-danboorusearch.hf.space/api/docs)
 
 ---
 
