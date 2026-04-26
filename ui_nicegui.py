@@ -37,6 +37,9 @@ from mcp_server import mcp
 import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+logging.getLogger("mcp").setLevel(logging.WARNING)
+logging.getLogger("mcp.server").setLevel(logging.WARNING)
+logging.getLogger("fastmcp").setLevel(logging.WARNING)
 
 # ── 表格列定义 ─────────────────────────────────────────────────────────────────
 

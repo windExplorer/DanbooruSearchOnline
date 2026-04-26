@@ -41,6 +41,9 @@ _memory_copies: int = 0
 _dirty_copies: int = 0
 BASE_COPIES: int = 0
 
+_memory_mcp: int = 0
+_dirty_mcp: int = 0
+
 _memory_successes: int = 0
 _dirty_successes: int = 0
 
@@ -107,35 +110,36 @@ def _merge_history(
 _COUNTER_FILE = 'count.json'
 
 
-def _parse_remote_data(raw: bytes) -> tuple[int, int, int, int, dict, list, list]:
-    """解析远端 JSON bytes，返回 (total, visits, copies, successes, keywords, bad_cases, history)。"""
+def _parse_remote_data(raw: bytes) -> tuple[int, int, int, int, int, dict, list, list]:
+    """解析远端 JSON bytes，返回 (total, visits, copies, mcp, successes, keywords, bad_cases, history)。"""
     try:
         data = json.loads(raw.decode('utf-8'))
         r_total     = int(data.get('total',     0))
         r_visits    = int(data.get('visits',    BASE_VISITS))
         r_copies    = int(data.get('copies',    BASE_COPIES))
+        r_mcp       = int(data.get('mcp',       0))
         r_successes = int(data.get('successes', int(r_total * 0.75)))
         r_keywords  = data.get('hot_keywords', {})
         r_bad_cases = data.get('bad_cases', [])
         r_history   = data.get('history', [])
-        return r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases, r_history
+        return r_total, r_visits, r_copies, r_mcp, r_successes, r_keywords, r_bad_cases, r_history
     except Exception:
-        return 0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
+        return 0, BASE_VISITS, BASE_COPIES, 0, 0, {}, [], []
 
 
-def _read_remote() -> tuple[int, int, int, int, dict, list, list]:
+def _read_remote() -> tuple[int, int, int, int, int, dict, list, list]:
     cfg = get_counter_cfg()
     if not cfg.available:
-        return 0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
+        return 0, BASE_VISITS, BASE_COPIES, 0, 0, {}, [], []
 
     try:
         raw = read_bytes(_COUNTER_FILE, cfg)
     except Exception as e:
         print(f'[Counter] 启动读取远端数据异常: {e}')
-        return 0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
+        return 0, BASE_VISITS, BASE_COPIES, 0, 0, {}, [], []
 
     if raw is None:
-        return 0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
+        return 0, BASE_VISITS, BASE_COPIES, 0, 0, {}, [], []
     return _parse_remote_data(raw)
 
 
@@ -143,34 +147,35 @@ def _sync_remote_task(
     adds_count: int,
     adds_visits: int,
     adds_copies: int,
+    adds_mcp: int,
     adds_successes: int,
     adds_keywords: dict,
     adds_bad_cases: list,
     memory_history_snapshot: list,
-) -> tuple[bool, int, int, int, int, dict, list, list]:
+) -> tuple[bool, int, int, int, int, int, dict, list, list]:
     cfg: CounterConfig = get_counter_cfg()
     if not cfg.available:
-        return False, 0, 0, 0, 0, {}, [], []
+        return False, 0, 0, 0, 0, 0, {}, [], []
 
     try:
         raw = read_bytes(_COUNTER_FILE, cfg)
     except Exception as e:
         print(f'[Counter] 远端读取异常，中止本次同步以保护数据: {e}')
-        return False, 0, 0, 0, 0, {}, [], []
+        return False, 0, 0, 0, 0, 0, {}, [], []
 
     if raw is not None:
-        r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases, r_history = (
+        r_total, r_visits, r_copies, r_mcp, r_successes, r_keywords, r_bad_cases, r_history = (
             _parse_remote_data(raw)
         )
     else:
-        r_total, r_visits, r_copies, r_successes, r_keywords, r_bad_cases, r_history = (
-            0, BASE_VISITS, BASE_COPIES, 0, {}, [], []
+        r_total, r_visits, r_copies, r_mcp, r_successes, r_keywords, r_bad_cases, r_history = (
+            0, BASE_VISITS, BASE_COPIES, 0, 0, {}, [], []
         )
 
-    # ── 合并 ──────────────────────────────────────────────────────────────
     n_total     = r_total     + adds_count
     n_visits    = r_visits    + adds_visits
     n_copies    = r_copies    + adds_copies
+    n_mcp       = r_mcp       + adds_mcp
     n_successes = r_successes + adds_successes
 
     merged_keywords = Counter(r_keywords)
@@ -180,14 +185,13 @@ def _sync_remote_task(
 
     merged_bad_cases = (adds_bad_cases + r_bad_cases)[:MAX_BAD_CASES]
 
-    # ── 历史快照：远端 + 调用时快照双重兜底，避免线程竞争读到空列表 ──────────
     n_history = _merge_history(r_history, n_total, memory=memory_history_snapshot)
 
-    # ── 序列化（history 放最后）──────────────────────────────────────────
     content = json.dumps({
         'total':        n_total,
         'visits':       n_visits,
         'copies':       n_copies,
+        'mcp':          n_mcp,
         'successes':    n_successes,
         'hot_keywords': top_keywords,
         'bad_cases':    merged_bad_cases,
@@ -195,27 +199,27 @@ def _sync_remote_task(
     }, ensure_ascii=False, indent=2).encode('utf-8')
 
     commit_msg = (
-        f'Sync: 搜索:{n_total} | 成功:{n_successes} | '
+        f'Sync: 搜索:{n_total} | MCP:{n_mcp} | 成功:{n_successes} | '
         f'复制:{n_copies} | 访问:{n_visits} | bad_cases:{len(merged_bad_cases)}'
     )
 
     ok = upload_bytes(content, _COUNTER_FILE, cfg, commit_msg, retries=3, retry_delay=1.0)
     if ok:
         print(
-            f'[Counter] 同步成功！搜索:{n_total}, 成功交互:{n_successes}, '
+            f'[Counter] 同步成功！搜索:{n_total}, MCP:{n_mcp}, 成功交互:{n_successes}, '
             f'复制:{n_copies}, bad_cases:{len(merged_bad_cases)}'
         )
-        return True, n_total, n_visits, n_copies, n_successes, top_keywords, merged_bad_cases, n_history
+        return True, n_total, n_visits, n_copies, n_mcp, n_successes, top_keywords, merged_bad_cases, n_history
 
-    return False, 0, 0, 0, 0, {}, [], []
+    return False, 0, 0, 0, 0, 0, {}, [], []
 
 
 # ── 后台同步协程 ──────────────────────────────────────────────────────────────
 
 async def _perform_sync():
-    global _dirty_count, _dirty_visits, _dirty_copies, _dirty_successes
+    global _dirty_count, _dirty_visits, _dirty_copies, _dirty_mcp, _dirty_successes
     global _dirty_keywords, _dirty_bad_cases, _last_sync
-    global _memory_count, _memory_visits, _memory_copies, _memory_successes
+    global _memory_count, _memory_visits, _memory_copies, _memory_mcp, _memory_successes
     global _memory_keywords, _memory_bad_cases, _memory_history
 
     lock = _get_sync_lock()
@@ -224,23 +228,23 @@ async def _perform_sync():
 
     async with lock:
         has_dirty = (
-            _dirty_count + _dirty_visits + _dirty_copies + _dirty_successes
+            _dirty_count + _dirty_visits + _dirty_copies + _dirty_mcp + _dirty_successes
             + len(_dirty_keywords) + len(_dirty_bad_cases)
         ) > 0
         if not has_dirty:
             return
 
-        c_adds, v_adds, cp_adds, s_adds = (
-            _dirty_count, _dirty_visits, _dirty_copies, _dirty_successes
+        c_adds, v_adds, cp_adds, m_adds, s_adds = (
+            _dirty_count, _dirty_visits, _dirty_copies, _dirty_mcp, _dirty_successes
         )
         k_adds  = dict(_dirty_keywords)
         bc_adds = list(_dirty_bad_cases)
-        # 在清空脏数据前快照 _memory_history，确保传入线程池时不受后续 clear() 影响
         history_snapshot = list(_memory_history)
 
         _dirty_count     = 0
         _dirty_visits    = 0
         _dirty_copies    = 0
+        _dirty_mcp       = 0
         _dirty_successes = 0
         _dirty_keywords.clear()
         _dirty_bad_cases.clear()
@@ -248,15 +252,16 @@ async def _perform_sync():
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None, _sync_remote_task,
-            c_adds, v_adds, cp_adds, s_adds, k_adds, bc_adds, history_snapshot,
+            c_adds, v_adds, cp_adds, m_adds, s_adds, k_adds, bc_adds, history_snapshot,
         )
-        success, l_total, l_visits, l_copies, l_successes, l_keywords, l_bad_cases, l_history = result
+        success, l_total, l_visits, l_copies, l_mcp, l_successes, l_keywords, l_bad_cases, l_history = result
 
         if success:
             _last_sync = time.time()
             _memory_count     = max(_memory_count,     l_total)
             _memory_visits    = max(_memory_visits,    l_visits)
             _memory_copies    = max(_memory_copies,    l_copies)
+            _memory_mcp       = max(_memory_mcp,       l_mcp)
             _memory_successes = max(_memory_successes, l_successes)
             _memory_keywords.clear()
             _memory_keywords.update(l_keywords)
@@ -268,6 +273,7 @@ async def _perform_sync():
             _dirty_count     += c_adds
             _dirty_visits    += v_adds
             _dirty_copies    += cp_adds
+            _dirty_mcp       += m_adds
             _dirty_successes += s_adds
             _dirty_keywords.update(k_adds)
             _dirty_bad_cases.extend(bc_adds)
@@ -277,7 +283,7 @@ async def _perform_sync():
 
 async def init():
     """启动时从 OSS 拉取最新计数，初始化内存状态。"""
-    global _memory_count, _memory_visits, _memory_copies, _memory_successes
+    global _memory_count, _memory_visits, _memory_copies, _memory_mcp, _memory_successes
     global _memory_keywords, _memory_bad_cases, _memory_history, _last_sync
 
     cfg = get_counter_cfg()
@@ -287,7 +293,7 @@ async def init():
 
     loop = asyncio.get_running_loop()
     (
-        _memory_count, _memory_visits, _memory_copies, _memory_successes,
+        _memory_count, _memory_visits, _memory_copies, _memory_mcp, _memory_successes,
         r_keys, r_bad_cases, r_history,
     ) = await loop.run_in_executor(None, _read_remote)
 
@@ -298,7 +304,7 @@ async def init():
     _memory_history.extend(r_history)
     _last_sync = time.time()
     print(
-        f'[Counter] 初始化完成（{cfg.platform}）：搜索={_memory_count}, '
+        f'[Counter] 初始化完成（{cfg.platform}）：搜索={_memory_count}, MCP={_memory_mcp}, '
         f'访问={_memory_visits}, 复制={_memory_copies}, 历史={len(_memory_history)}天'
     )
 
@@ -308,7 +314,7 @@ def _check_sync():
     if not cfg.available:
         return
     if (time.time() - _last_sync > SYNC_INTERVAL) or (
-        _dirty_count + _dirty_visits + _dirty_copies + _dirty_successes
+        _dirty_count + _dirty_visits + _dirty_copies + _dirty_mcp + _dirty_successes
         + len(_dirty_keywords) + len(_dirty_bad_cases)
     ) >= SYNC_THRESHOLD:
         asyncio.create_task(_perform_sync())
@@ -331,6 +337,12 @@ async def increment_copy() -> int:
     _memory_copies += 1; _dirty_copies += 1
     _check_sync()
     return _memory_copies
+
+async def increment_mcp() -> int:
+    global _memory_mcp, _dirty_mcp
+    _memory_mcp += 1; _dirty_mcp += 1
+    _check_sync()
+    return _memory_mcp
 
 async def increment_success() -> int:
     global _memory_successes, _dirty_successes
@@ -366,6 +378,7 @@ async def add_bad_case(query: str, platform: str = '', settings: dict | None = N
 def get() -> int:           return _memory_count
 def get_visits() -> int:    return _memory_visits
 def get_copies() -> int:    return _memory_copies
+def get_mcp() -> int:       return _memory_mcp
 def get_successes() -> int: return _memory_successes
 
 def get_hot_keywords(top_n: int = 10) -> dict:

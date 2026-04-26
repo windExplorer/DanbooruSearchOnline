@@ -1,9 +1,7 @@
 """
 mcp_server.py
 ─────────────
-MCP 服务层（可选）。
-
-演示如何在完全不修改 core/ 的情况下将引擎暴露为 MCP 工具。
+MCP 服务层
 
 挂载方式（在 ui_nicegui.py 中）：
     from mcp_server import mcp
@@ -97,6 +95,7 @@ JSON string with fields: prompt (comma-separated tags), keywords, results.
     await counter.increment()
     await counter.increment_success()
     await counter.increment_copy()
+    await counter.increment_mcp()
 
     results = [
         {
@@ -154,6 +153,7 @@ Returns:
     await counter.increment()
     await counter.increment_success()
     await counter.increment_copy()
+    await counter.increment_mcp()
 
     return json.dumps([
         {
