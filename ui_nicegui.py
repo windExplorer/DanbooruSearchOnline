@@ -173,6 +173,9 @@ class DanbooruSearchUI:
                     f' | <a href="https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline#mcp-接口" '
                     f'target="_blank" rel="noopener noreferrer" '
                     f'class="text-blue-400 hover:text-blue-600 hover:underline">使用 MCP 服务</a>'
+                    f' | <a href="https://linux.do/" '
+                    f'target="_blank" rel="noopener noreferrer" '
+                    f'class="text-blue-400 hover:text-blue-600 hover:underline">linux.do社区</a>'
                 )
             except AttributeError:
                 pass

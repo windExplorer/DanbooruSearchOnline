@@ -76,6 +76,15 @@ CAT_MAP: dict[str, str] = {
 
 SCHEMA_VERSION = 2   # 升级此值将自动触发全量重建，用于破坏性格式变更
 
+# 四路 embedding 层配置: (层名, tensor 属性名, DataFrame 列名)
+_LAYER_SPEC: list[tuple[str, str, str]] = [
+    ('英文',   'emb_en',      'name'),
+    ('中文扩展词', 'emb_cn',      'cn_name'),
+    ('释义',   'emb_wiki',    'wiki'),
+    ('中文核心词', 'emb_cn_core', 'cn_core'),
+]
+_ALL_LAYER_NAMES = [ln for ln, _, _ in _LAYER_SPEC]
+
 
 # ──────────────────────────────────────────────
 # 缓存路径助手
@@ -246,7 +255,7 @@ class DanbooruTagger:
         k     = request.top_k
 
         layer_weights  = self._detect_intent(request.query)
-        active_layers  = [l for l in ['英文', '中文扩展词', '释义', '中文核心词'] if l in tl]
+        active_layers  = [ln for ln in _ALL_LAYER_NAMES if ln in tl]
         if active_layers:
             aw        = {l: layer_weights.get(l, 1.0) for l in active_layers}
             total_aw  = sum(aw.values())
@@ -254,20 +263,21 @@ class DanbooruTagger:
         else:
             pvk = {}
 
-        hits_en   = util.semantic_search(q_emb, self.emb_en,      top_k=pvk.get('英文',      1)) if '英文'      in tl else empty
-        hits_cn   = util.semantic_search(q_emb, self.emb_cn,      top_k=pvk.get('中文扩展词', 1)) if '中文扩展词' in tl else empty
-        hits_wiki = util.semantic_search(q_emb, self.emb_wiki,    top_k=pvk.get('释义',       1)) if '释义'      in tl else empty
-        hits_core = util.semantic_search(q_emb, self.emb_cn_core, top_k=pvk.get('中文核心词', 1)) if '中文核心词' in tl else empty
+        layer_hits: dict[str, list] = {}
+        for ln, attr, _ in _LAYER_SPEC:
+            if ln in tl:
+                layer_hits[ln] = util.semantic_search(
+                    q_emb, getattr(self, attr), top_k=pvk.get(ln, 1))
+            else:
+                layer_hits[ln] = empty
 
         final: dict[str, TagResult] = {}
 
         for i, source_word in enumerate(queries):
-            combined = (
-                [(h, '英文')       for h in hits_en[i]]
-                + [(h, '中文扩展词') for h in hits_cn[i]]
-                + [(h, '释义')       for h in hits_wiki[i]]
-                + [(h, '中文核心词') for h in hits_core[i]]
-            )
+            combined = []
+            for ln, _, _ in _LAYER_SPEC:
+                if ln in tl:
+                    combined.extend((h, ln) for h in layer_hits[ln][i])
             for hit, layer in combined:
                 score = hit['score']
                 if score < 0.35:
@@ -330,10 +340,8 @@ class DanbooruTagger:
 
     def _encode_all_and_save(self) -> None:
         print('[Engine] 全量编码...')
-        self.emb_en      = self._encode_texts(self.df['name'].tolist())
-        self.emb_cn      = self._encode_texts(self.df['cn_name'].tolist())
-        self.emb_wiki    = self._encode_texts(self.df['wiki'].tolist())
-        self.emb_cn_core = self._encode_texts(self.df['cn_core'].tolist())
+        for _, attr, col in _LAYER_SPEC:
+            setattr(self, attr, self._encode_texts(self.df[col].tolist()))
         self._save_cache()
 
     # ── 增量更新 ──────────────────────────────────────────────────────────
@@ -370,38 +378,26 @@ class DanbooruTagger:
         if deleted_names:
             keep_mask = ~self.df['name'].isin(set(deleted_names))
             keep_pos  = [i for i, v in enumerate(keep_mask) if v]
-            self.df        = self.df[keep_mask].reset_index(drop=True)
-            self.emb_en      = self.emb_en[keep_pos]
-            self.emb_cn      = self.emb_cn[keep_pos]
-            self.emb_wiki    = self.emb_wiki[keep_pos]
-            self.emb_cn_core = self.emb_cn_core[keep_pos]
+            self.df = self.df[keep_mask].reset_index(drop=True)
+            for _, attr, _ in _LAYER_SPEC:
+                setattr(self, attr, getattr(self, attr)[keep_pos])
             cached_idx = {n: i for i, n in enumerate(self.df['name'])}
 
         if changed_names:
             changed_rows = new_df[new_df['name'].isin(set(changed_names))].reset_index(drop=True)
-            vecs_en   = self._encode_texts(changed_rows['name'].tolist())
-            vecs_cn   = self._encode_texts(changed_rows['cn_name'].tolist())
-            vecs_wiki = self._encode_texts(changed_rows['wiki'].tolist())
-            vecs_core = self._encode_texts(changed_rows['cn_core'].tolist())
+            _vecs = {attr: self._encode_texts(changed_rows[col].tolist()) for _, attr, col in _LAYER_SPEC}
             for j, name in enumerate(changed_rows['name']):
                 ci = cached_idx[name]
-                self.emb_en[ci]      = vecs_en[j]
-                self.emb_cn[ci]      = vecs_cn[j]
-                self.emb_wiki[ci]    = vecs_wiki[j]
-                self.emb_cn_core[ci] = vecs_core[j]
+                for _, attr, _ in _LAYER_SPEC:
+                    getattr(self, attr)[ci] = _vecs[attr][j]
                 for col in changed_rows.columns:
                     self.df.at[ci, col] = changed_rows.at[j, col]
 
         if added_names:
             added_rows = new_df[new_df['name'].isin(set(added_names))].reset_index(drop=True)
-            vecs_en   = self._encode_texts(added_rows['name'].tolist())
-            vecs_cn   = self._encode_texts(added_rows['cn_name'].tolist())
-            vecs_wiki = self._encode_texts(added_rows['wiki'].tolist())
-            vecs_core = self._encode_texts(added_rows['cn_core'].tolist())
-            self.emb_en      = torch.cat([self.emb_en,      vecs_en],   dim=0)
-            self.emb_cn      = torch.cat([self.emb_cn,      vecs_cn],   dim=0)
-            self.emb_wiki    = torch.cat([self.emb_wiki,    vecs_wiki], dim=0)
-            self.emb_cn_core = torch.cat([self.emb_cn_core, vecs_core], dim=0)
+            for _, attr, col in _LAYER_SPEC:
+                vecs = self._encode_texts(added_rows[col].tolist())
+                setattr(self, attr, torch.cat([getattr(self, attr), vecs], dim=0))
             self.df = pd.concat([self.df, added_rows], ignore_index=True)
 
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
@@ -414,12 +410,7 @@ class DanbooruTagger:
     def _save_cache(self) -> None:
         self.paths.ensure_dir()
         st_save(
-            {
-                'emb_en': self.emb_en.half(),
-                'emb_cn': self.emb_cn.half(),
-                'emb_wiki': self.emb_wiki.half(),
-                'emb_cn_core': self.emb_cn_core.half(),
-            },
+            {attr: getattr(self, attr).half() for _, attr, _ in _LAYER_SPEC},
             str(self.paths.embeddings),
         )
         save_cols = ['name', 'cn_name', 'cn_core', 'wiki', 'nsfw', 'category', 'post_count']
@@ -436,10 +427,8 @@ class DanbooruTagger:
 
     def _load_from_cache(self) -> None:
         tensors = st_load(str(self.paths.embeddings), device=self.device)
-        self.emb_en      = tensors['emb_en'].float()
-        self.emb_cn      = tensors['emb_cn'].float()
-        self.emb_wiki    = tensors['emb_wiki'].float()
-        self.emb_cn_core = tensors['emb_cn_core'].float()
+        for _, attr, _ in _LAYER_SPEC:
+            setattr(self, attr, tensors[attr].float())
         self.df = pd.read_parquet(str(self.paths.metadata))
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
 
