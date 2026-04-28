@@ -254,7 +254,10 @@ class DanbooruTagger:
         tl    = request.target_layers
         k     = request.top_k
 
-        layer_weights  = self._detect_intent(request.query)
+        # 每个查询词单独做意图识别，避免长句意图污染短分词
+        query_weights = [self._detect_intent(q) for q in queries]
+        # pvk 基于完整查询的意图来分配各层 top-k 名额
+        layer_weights  = query_weights[0]
         active_layers  = [ln for ln in _ALL_LAYER_NAMES if ln in tl]
         if active_layers:
             aw        = {l: layer_weights.get(l, 1.0) for l in active_layers}
@@ -274,6 +277,7 @@ class DanbooruTagger:
         final: dict[str, TagResult] = {}
 
         for i, source_word in enumerate(queries):
+            cur_weights = query_weights[i]
             combined = []
             for ln, _, _ in _LAYER_SPEC:
                 if ln in tl:
@@ -291,7 +295,7 @@ class DanbooruTagger:
                 count       = row['post_count']
                 pop_score   = np.log1p(count) / self.max_log_count
                 w           = request.popularity_weight
-                final_score = score * layer_weights.get(layer, 1.0) * (1 - w) + pop_score * w
+                final_score = score * cur_weights.get(layer, 1.0) * (1 - w) + pop_score * w
                 if tag_name not in final or final_score > final[tag_name].final_score:
                     final[tag_name] = TagResult(
                         tag=tag_name, cn_name=row['cn_name'], category=cat_text,
