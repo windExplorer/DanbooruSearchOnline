@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 import torch
 from safetensors.torch import load_file as st_load, save_file as st_save
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import SentenceTransformer
 
 from .models import SearchRequest, SearchResponse, TagResult
 from platform_utils import (
@@ -201,8 +201,21 @@ class DanbooruTagger:
         self._load_cooc()
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
         self._rebuild_arrays_from_df()
+        self._normalize_embeddings()
         self.is_loaded = True
         print(f'[Engine] 初始化完成，耗时 {time.time() - t0:.2f}s')
+
+    def _normalize_embeddings(self) -> None:
+        """
+        对四路 embedding 矩阵做 L2 归一化（in-place 替换 self.emb_*）。
+        归一化后 search 阶段可直接用矩阵乘法得到 cosine similarity，
+        无需每次调用 util.semantic_search 内部再做一次归一化。
+        """
+        for _, attr, _ in _LAYER_SPEC:
+            t = getattr(self, attr)
+            if t is None:
+                continue
+            setattr(self, attr, torch.nn.functional.normalize(t, p=2, dim=1))
 
     def _rebuild_arrays_from_df(self) -> None:
         """
@@ -277,6 +290,9 @@ class DanbooruTagger:
             queries  = [request.query]
 
         q_emb = self.model.encode(queries, convert_to_tensor=True, show_progress_bar=False).float()
+        # 预归一化 query，与已归一化的 self.emb_* 配合做 cosine
+        q_emb = torch.nn.functional.normalize(q_emb, p=2, dim=1)
+
         tl    = request.target_layers
         k     = request.top_k
 
@@ -284,38 +300,60 @@ class DanbooruTagger:
         query_weights = [self._detect_intent(q) for q in queries]
         active_layers = [ln for ln in _ALL_LAYER_NAMES if ln in tl]
 
-        final: dict[str, TagResult] = {}
-
-        for i, source_word in enumerate(queries):
-            cur_weights = query_weights[i]
-
-            # 按本词自己的意图分配各层 top-k 配额
+        # 预算每个 query × 每个 layer 的 top_k 配额
+        # cur_pvk_per_q[i][ln] = 第 i 个 query 在 layer ln 的配额
+        cur_pvk_per_q: list[dict[str, int]] = []
+        for cur_weights in query_weights:
             if active_layers:
                 aw       = {l: cur_weights.get(l, 1.0) for l in active_layers}
                 total_aw = sum(aw.values())
                 cur_pvk  = {l: max(1, round(k * aw[l] / total_aw)) for l in active_layers}
             else:
                 cur_pvk = {}
+            cur_pvk_per_q.append(cur_pvk)
 
-            q_vec = q_emb[i : i + 1]   # (1, D)
+        target_cats = request.target_categories
+        w_pop       = request.popularity_weight
 
-            for ln, attr, _ in _LAYER_SPEC:
-                if ln not in tl:
-                    continue
-                hits = util.semantic_search(q_vec, getattr(self, attr), top_k=cur_pvk.get(ln, 1))[0]
-                for hit in hits:
-                    score = hit['score']
+        final: dict[str, TagResult] = {}
+
+        # 按 layer 批量做矩阵乘 + topk，合并 Q×L=20 次小调用为 L=4 次大调用
+        for ln, attr, _ in _LAYER_SPEC:
+            if ln not in tl:
+                continue
+            emb_matrix = getattr(self, attr)   # (N, D)，已归一化
+            if emb_matrix is None:
+                continue
+
+            # 该 layer 在所有 query 中的最大配额（少数 query 会算到多余的 hit，最后按各自配额截断）
+            k_max = max((cur_pvk_per_q[i].get(ln, 1) for i in range(len(queries))), default=1)
+            k_max = min(k_max, emb_matrix.shape[0])
+
+            scores = q_emb @ emb_matrix.T                       # (Q, N)
+            top_v, top_i = scores.topk(k_max, dim=1)            # (Q, k_max)
+            top_v_list = top_v.tolist()
+            top_i_list = top_i.tolist()
+
+            for i, source_word in enumerate(queries):
+                cur_weights = query_weights[i]
+                kq = cur_pvk_per_q[i].get(ln, 1)
+                layer_w = cur_weights.get(ln, 1.0)
+                row_v = top_v_list[i]
+                row_i = top_i_list[i]
+                # 仅取该 query 自己的配额条数
+                for j in range(min(kq, len(row_v))):
+                    score = row_v[j]
                     if score < 0.35:
-                        continue
-                    idx      = hit['corpus_id']
+                        # topk 已按分数降序，后续都低于阈值，可提前结束
+                        break
+                    idx = row_i[j]
                     cat_text = CAT_MAP.get(self._arr_category[idx], 'Other')
-                    if cat_text not in request.target_categories:
+                    if cat_text not in target_cats:
                         continue
                     tag_name    = self._arr_name[idx]
                     count       = self._arr_post_count[idx]
                     pop_score   = self._arr_pop_score[idx]
-                    w           = request.popularity_weight
-                    final_score = score * cur_weights.get(ln, 1.0) * (1 - w) + pop_score * w
+                    final_score = score * layer_w * (1 - w_pop) + pop_score * w_pop
                     if tag_name not in final or final_score > final[tag_name].final_score:
                         final[tag_name] = TagResult(
                             tag=tag_name, cn_name=self._arr_cn_name[idx], category=cat_text,
@@ -427,6 +465,7 @@ class DanbooruTagger:
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
         self._rebuild_arrays_from_df()
+        self._normalize_embeddings()
         self._save_cache()
         print(f'[Engine] 增量更新完成，耗时 {time.time() - t0:.2f}s（共 {len(self.df)} 条）')
 
