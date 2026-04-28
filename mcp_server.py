@@ -22,6 +22,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from core.engine import DanbooruTagger
 from core.models import SearchRequest
 import core.counter as counter
+import re
 
 
 mcp = FastMCP(
@@ -108,11 +109,18 @@ JSON string with fields: prompt (comma-separated tags), keywords, results.
         for r in response.results
     ]
 
-    return json.dumps({
+    payload = {
         "prompt":   response.tags_sfw if not show_nsfw else response.tags_all,
         "keywords": response.keywords,
         "results":  results,
-    }, ensure_ascii=False, indent=2)
+    }
+    han_chars = re.findall(r'[\u4e00-\u9fff]', query)
+    if len(query) > 0 and len(han_chars) / len(query) < 0.5:
+        payload["hint"] = (
+            "检测到英文查询，该搜索引擎对中文查询优化更好，如果搜索结果不合预期，推荐用中文重试"
+        )
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
 
 
 @mcp.tool()

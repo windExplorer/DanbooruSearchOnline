@@ -74,7 +74,7 @@ OPTIONAL_COLS = {
 
 # localStorage key 与配置版本，版本变更时自动丢弃旧配置
 _CONFIG_LS_KEY = 'danbooru_search_config'
-_CONFIG_VERSION = 3
+_CONFIG_VERSION = 4
 
 
 # ── 辅助函数 ───────────────────────────────────────────────────────────────────
@@ -244,6 +244,7 @@ class DanbooruSearchUI:
             'sw_source': bool(self.sw_source.value) if self.sw_source else False,
             'prompt_format': self.prompt_format,
             'rows_per_page': self._get_rows_per_page(),
+            'search_query': self.search_input.value if self.search_input else '',
         }
         js = _json.dumps(cfg, ensure_ascii=False)
         ui.run_javascript(f"localStorage.setItem('{_CONFIG_LS_KEY}', {_json.dumps(js)});")
@@ -317,6 +318,9 @@ class DanbooruSearchUI:
 
         if 'rows_per_page' in cfg:
             self._set_rows_per_page(cfg['rows_per_page'])
+
+        if self.search_input and cfg.get('search_query'):
+            self.search_input.set_value(cfg['search_query'])
 
         # 若高级选项列有变更，同步更新表格列
         self._update_table_columns()
@@ -1257,7 +1261,6 @@ if __name__ in {'__main__', '__mp_main__'}:
             await counter.init()
             await DanbooruTagger.get_instance()
             print("[UI] 后台预热全部完成！", flush=True)
-            print("[UI] 如果您在Log中看到此信息，但Space并未正常运行，请尝试访问：https://sakizuki-danboorusearch.hf.space/", flush=True)
         asyncio.create_task(background_init_tasks())
 
     @app.on_shutdown
