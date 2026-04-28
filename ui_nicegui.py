@@ -40,6 +40,12 @@ logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 logging.getLogger("mcp").setLevel(logging.WARNING)
 logging.getLogger("mcp.server").setLevel(logging.WARNING)
 logging.getLogger("fastmcp").setLevel(logging.WARNING)
+# suppress MCP streamable-HTTP transport noise
+logging.getLogger("uvicorn.error").addFilter(
+    type("_f", (logging.Filter,), {
+        "filter": staticmethod(lambda r: "No response returned" not in r.getMessage())
+    })()
+)
 
 # ── 表格列定义 ─────────────────────────────────────────────────────────────────
 
