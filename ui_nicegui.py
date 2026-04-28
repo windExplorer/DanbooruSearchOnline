@@ -40,12 +40,21 @@ logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 logging.getLogger("mcp").setLevel(logging.WARNING)
 logging.getLogger("mcp.server").setLevel(logging.WARNING)
 logging.getLogger("fastmcp").setLevel(logging.WARNING)
-# suppress MCP streamable-HTTP transport noise
-logging.getLogger("uvicorn.error").addFilter(
-    type("_f", (logging.Filter,), {
-        "filter": staticmethod(lambda r: "No response returned" not in r.getMessage())
-    })()
-)
+# suppress MCP streamable-HTTP transport noise ("No response returned" from Starlette middleware)
+class _SuppressMCPNoise(logging.Filter):
+    _MARKER = "No response returned"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if self._MARKER in record.getMessage():
+            return False
+        if record.exc_info:
+            import traceback
+            tb_text = "".join(traceback.format_exception(*record.exc_info))
+            if self._MARKER in tb_text:
+                return False
+        return True
+
+logging.getLogger("uvicorn.error").addFilter(_SuppressMCPNoise())
 
 # ── 表格列定义 ─────────────────────────────────────────────────────────────────
 
