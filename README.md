@@ -56,7 +56,7 @@ thumbnail: >-
 - [概念模糊发散](#2-概念模糊发散)
 - [输入描述查词](#3-输入描述查词)
 - [完整画面查找](#4-完整画面查找)
-- [关联推荐](#5-关联推荐（共现匹配）)
+- [关联推荐](#5-关联推荐共现匹配)
 
 前四项基于**语义向量匹配**，后一项基于**标签共现数据**。
 
@@ -329,24 +329,37 @@ https://sakizuki-danboorusearch.hf.space/mcp/mcp
 
 ### 接入方法
 
-**方法一：JSON 配置文件（Claude Desktop / Cursor 等）**
+**方法一：Claude Desktop**
 
-在客户端的 MCP 配置文件中添加以下内容：
+Claude Desktop 不支持直接连接 Streamable HTTP 端点，需要通过 `mcp-remote` 作为本地桥接。
+
+首先全局安装 `mcp-remote`（需要本机已安装 Node.js）：
+
+```bash
+npm install -g mcp-remote
+```
+
+然后在配置文件中添加以下内容：
+
+- Windows：`%APPDATA%\Claude\claude_desktop_config.json`
+- macOS：`~/Library/Application Support/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "danbooru-searcher": {
-      "url": "https://sakizuki-danboorusearch.hf.space/mcp/mcp"
+      "command": "mcp-remote",
+      "args": [
+        "https://sakizuki-danboorusearch.hf.space/mcp/mcp"
+      ]
     }
   }
 }
 ```
 
-各客户端配置文件路径：
-- Claude Desktop（Windows）：`%APPDATA%\Claude\claude_desktop_config.json`
-- Claude Desktop（macOS）：`~/Library/Application Support/Claude/claude_desktop_config.json`
-- Cursor：参考官方文档的 MCP 配置入口
+保存后重启 Claude Desktop，工具列表中出现 `search_tags` 和 `get_related_tags` 即为成功。
+
+> 注意：不要使用 `"url"` 字段直接填写地址，Claude Desktop 不支持该格式，会提示配置无效。也不推荐通过 `npx mcp-remote` 调用，首次执行时 `npx` 需要临时下载包，npm 缓存损坏时会导致启动失败。全局安装可规避此问题。
 
 **方法二：图形界面（Cherry Studio 等）**
 

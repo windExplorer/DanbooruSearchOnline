@@ -43,7 +43,7 @@ async def search_tags(
 Search Danbooru tags using natural language and return a ready-to-use prompt.
 
 ## Args
-- query: Natural language description (Chinese recommended).
+- query: Natural language description ( **Chinese recommended** ).
 - use_segmentation: True for full-scene descriptions (splits concepts). False for exact lookup, single character match, or spell correction.
 - top_k: Recall per segment. Use 5 for full scenes, 20 for precise tag lookup, 80-160 for broad concept exploration.
 	> Note: Higher top_k causes high-frequency segments to occupy more slots, potentially crowding out precise low-frequency matches.
