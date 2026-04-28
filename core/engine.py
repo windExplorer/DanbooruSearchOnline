@@ -155,6 +155,15 @@ class DanbooruTagger:
         self._name_to_idx: dict[str, int]                         = {}
         self.is_loaded:     bool                                  = False
 
+        # 预提取的列数组，避免热点路径上反复执行 df.iloc[idx]
+        self._arr_name:       Optional[np.ndarray] = None
+        self._arr_cn_name:    Optional[np.ndarray] = None
+        self._arr_category:   Optional[np.ndarray] = None
+        self._arr_nsfw:       Optional[np.ndarray] = None
+        self._arr_wiki:       Optional[np.ndarray] = None
+        self._arr_post_count: Optional[np.ndarray] = None
+        self._arr_pop_score:  Optional[np.ndarray] = None
+
     # ── 初始化 ────────────────────────────────────────────────────────────
 
     def load(self) -> None:
@@ -191,8 +200,26 @@ class DanbooruTagger:
         self._setup_jieba_from_memory()
         self._load_cooc()
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
+        self._rebuild_arrays_from_df()
         self.is_loaded = True
         print(f'[Engine] 初始化完成，耗时 {time.time() - t0:.2f}s')
+
+    def _rebuild_arrays_from_df(self) -> None:
+        """
+        将 DataFrame 中搜索热点路径需要的列预提取为 numpy 数组。
+        任何修改 self.df 行内容或行数的操作之后都必须调用此方法刷新。
+        """
+        if self.df is None:
+            return
+        self._arr_name       = self.df['name'].to_numpy()
+        self._arr_cn_name    = self.df['cn_name'].to_numpy()
+        self._arr_category   = self.df['category'].astype(str).to_numpy()
+        self._arr_nsfw       = self.df['nsfw'].astype(str).to_numpy()
+        self._arr_wiki       = self.df['wiki'].astype(str).to_numpy()
+        self._arr_post_count = self.df['post_count'].to_numpy()
+        # 预算热度归一化分，避免 search 中每次 np.log1p
+        max_log = self.max_log_count if self.max_log_count > 0 else 1.0
+        self._arr_pop_score  = np.log1p(self._arr_post_count) / max_log
 
     def _pull_cloud_files(self) -> None:
         """
@@ -281,23 +308,22 @@ class DanbooruTagger:
                     if score < 0.35:
                         continue
                     idx      = hit['corpus_id']
-                    row      = self.df.iloc[idx]
-                    cat_text = CAT_MAP.get(str(row.get('category', '0')), 'Other')
+                    cat_text = CAT_MAP.get(self._arr_category[idx], 'Other')
                     if cat_text not in request.target_categories:
                         continue
-                    tag_name    = row['name']
-                    count       = row['post_count']
-                    pop_score   = np.log1p(count) / self.max_log_count
+                    tag_name    = self._arr_name[idx]
+                    count       = self._arr_post_count[idx]
+                    pop_score   = self._arr_pop_score[idx]
                     w           = request.popularity_weight
                     final_score = score * cur_weights.get(ln, 1.0) * (1 - w) + pop_score * w
                     if tag_name not in final or final_score > final[tag_name].final_score:
                         final[tag_name] = TagResult(
-                            tag=tag_name, cn_name=row['cn_name'], category=cat_text,
-                            nsfw=str(row.get('nsfw', '0')),
+                            tag=tag_name, cn_name=self._arr_cn_name[idx], category=cat_text,
+                            nsfw=self._arr_nsfw[idx],
                             final_score=round(float(final_score), 4),
                             semantic_score=round(float(score), 4),
                             count=int(count), source=source_word, layer=ln,
-                            wiki=str(row.get('wiki', '')),
+                            wiki=self._arr_wiki[idx],
                         )
 
         # 收集每个查询源的 top-1 结果（高于阈值）
@@ -400,6 +426,7 @@ class DanbooruTagger:
 
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
+        self._rebuild_arrays_from_df()
         self._save_cache()
         print(f'[Engine] 增量更新完成，耗时 {time.time() - t0:.2f}s（共 {len(self.df)} 条）')
 
@@ -558,12 +585,13 @@ class DanbooruTagger:
         total_cooc: dict[str, int] = {}
         tag_sources: dict[str, list[str]] = {}
         name_to_idx = self._name_to_idx
+        arr_post_count = self._arr_post_count
 
         for seed in seed_tags:
             if seed not in name_to_idx:
                 continue
 
-            seed_count = float(self.df.iloc[name_to_idx[seed]].get('post_count', 1) or 1)
+            seed_count = float(arr_post_count[name_to_idx[seed]] or 1)
 
             for neighbor, cnt in self.cooc.get(seed, []):
                 if neighbor in exclude or neighbor == seed:
@@ -571,7 +599,7 @@ class DanbooruTagger:
                 if neighbor not in name_to_idx:
                     continue
 
-                neighbor_count = float(self.df.iloc[name_to_idx[neighbor]].get('post_count', 1) or 1)
+                neighbor_count = float(arr_post_count[name_to_idx[neighbor]] or 1)
 
                 cooc = min(float(cnt), seed_count, neighbor_count)
                 if cooc <= 0:
@@ -611,16 +639,16 @@ class DanbooruTagger:
             if len(results) >= limit:
                 break
 
-            row = self.df.iloc[name_to_idx[tag_name]]
-            nsfw = str(row.get('nsfw', '0'))
+            idx = name_to_idx[tag_name]
+            nsfw = self._arr_nsfw[idx]
             if nsfw == '1' and not show_nsfw:
                 continue
 
-            cat = CAT_MAP.get(str(row.get('category', '0')), 'Other')
+            cat = CAT_MAP.get(self._arr_category[idx], 'Other')
 
             results.append(RelatedTag(
                 tag=tag_name,
-                cn_name=str(row.get('cn_name', '')),
+                cn_name=str(self._arr_cn_name[idx]),
                 category=cat,
                 nsfw=nsfw,
                 cooc_count=total_cooc[tag_name],
