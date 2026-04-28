@@ -250,61 +250,55 @@ class DanbooruTagger:
             queries  = [request.query]
 
         q_emb = self.model.encode(queries, convert_to_tensor=True, show_progress_bar=False).float()
-        empty = [[] for _ in queries]
         tl    = request.target_layers
         k     = request.top_k
 
         # 每个查询词单独做意图识别，避免长句意图污染短分词
         query_weights = [self._detect_intent(q) for q in queries]
-        # pvk 基于完整查询的意图来分配各层 top-k 名额
-        layer_weights  = query_weights[0]
-        active_layers  = [ln for ln in _ALL_LAYER_NAMES if ln in tl]
-        if active_layers:
-            aw        = {l: layer_weights.get(l, 1.0) for l in active_layers}
-            total_aw  = sum(aw.values())
-            pvk       = {l: max(1, round(k * aw[l] / total_aw)) for l in active_layers}
-        else:
-            pvk = {}
-
-        layer_hits: dict[str, list] = {}
-        for ln, attr, _ in _LAYER_SPEC:
-            if ln in tl:
-                layer_hits[ln] = util.semantic_search(
-                    q_emb, getattr(self, attr), top_k=pvk.get(ln, 1))
-            else:
-                layer_hits[ln] = empty
+        active_layers = [ln for ln in _ALL_LAYER_NAMES if ln in tl]
 
         final: dict[str, TagResult] = {}
 
         for i, source_word in enumerate(queries):
             cur_weights = query_weights[i]
-            combined = []
-            for ln, _, _ in _LAYER_SPEC:
-                if ln in tl:
-                    combined.extend((h, ln) for h in layer_hits[ln][i])
-            for hit, layer in combined:
-                score = hit['score']
-                if score < 0.35:
+
+            # 按本词自己的意图分配各层 top-k 配额
+            if active_layers:
+                aw       = {l: cur_weights.get(l, 1.0) for l in active_layers}
+                total_aw = sum(aw.values())
+                cur_pvk  = {l: max(1, round(k * aw[l] / total_aw)) for l in active_layers}
+            else:
+                cur_pvk = {}
+
+            q_vec = q_emb[i : i + 1]   # (1, D)
+
+            for ln, attr, _ in _LAYER_SPEC:
+                if ln not in tl:
                     continue
-                idx      = hit['corpus_id']
-                row      = self.df.iloc[idx]
-                cat_text = CAT_MAP.get(str(row.get('category', '0')), 'Other')
-                if cat_text not in request.target_categories:
-                    continue
-                tag_name    = row['name']
-                count       = row['post_count']
-                pop_score   = np.log1p(count) / self.max_log_count
-                w           = request.popularity_weight
-                final_score = score * cur_weights.get(layer, 1.0) * (1 - w) + pop_score * w
-                if tag_name not in final or final_score > final[tag_name].final_score:
-                    final[tag_name] = TagResult(
-                        tag=tag_name, cn_name=row['cn_name'], category=cat_text,
-                        nsfw=str(row.get('nsfw', '0')),
-                        final_score=round(float(final_score), 4),
-                        semantic_score=round(float(score), 4),
-                        count=int(count), source=source_word, layer=layer,
-                        wiki=str(row.get('wiki', '')),
-                    )
+                hits = util.semantic_search(q_vec, getattr(self, attr), top_k=cur_pvk.get(ln, 1))[0]
+                for hit in hits:
+                    score = hit['score']
+                    if score < 0.35:
+                        continue
+                    idx      = hit['corpus_id']
+                    row      = self.df.iloc[idx]
+                    cat_text = CAT_MAP.get(str(row.get('category', '0')), 'Other')
+                    if cat_text not in request.target_categories:
+                        continue
+                    tag_name    = row['name']
+                    count       = row['post_count']
+                    pop_score   = np.log1p(count) / self.max_log_count
+                    w           = request.popularity_weight
+                    final_score = score * cur_weights.get(ln, 1.0) * (1 - w) + pop_score * w
+                    if tag_name not in final or final_score > final[tag_name].final_score:
+                        final[tag_name] = TagResult(
+                            tag=tag_name, cn_name=row['cn_name'], category=cat_text,
+                            nsfw=str(row.get('nsfw', '0')),
+                            final_score=round(float(final_score), 4),
+                            semantic_score=round(float(score), 4),
+                            count=int(count), source=source_word, layer=ln,
+                            wiki=str(row.get('wiki', '')),
+                        )
 
         # 收集每个查询源的 top-1 结果（高于阈值）
         guaranteed_tags: set[str] = set()
