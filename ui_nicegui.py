@@ -77,6 +77,7 @@ _CONFIG_LS_KEY = 'danbooru_search_config'
 _CONFIG_VERSION = 4
 
 
+
 # ── 辅助函数 ───────────────────────────────────────────────────────────────────
 
 def _get_git_commit() -> str:
@@ -159,6 +160,9 @@ class DanbooruSearchUI:
         self.selected_cats = {'General': True, 'Copyright': True, 'Character': True}
 
         self.bad_case_btn = None
+
+        self.mcp_notice = None
+        self.notice_expansion = None
 
         # 表格显示选项开关
         self.sw_semantic = None
@@ -245,6 +249,8 @@ class DanbooruSearchUI:
             'prompt_format': self.prompt_format,
             'rows_per_page': self._get_rows_per_page(),
             'search_query': self.search_input.value if self.search_input else '',
+            'notice_expanded': bool(self.notice_expansion.value) if self.notice_expansion else True,
+            'mcp_notice_dismissed': not bool(self.mcp_notice.visible) if self.mcp_notice else False,
         }
         js = _json.dumps(cfg, ensure_ascii=False)
         ui.run_javascript(f"localStorage.setItem('{_CONFIG_LS_KEY}', {_json.dumps(js)});")
@@ -321,6 +327,12 @@ class DanbooruSearchUI:
 
         if self.search_input and cfg.get('search_query'):
             self.search_input.set_value(cfg['search_query'])
+
+        if self.notice_expansion and 'notice_expanded' in cfg:
+            self.notice_expansion.set_value(cfg['notice_expanded'])
+
+        if self.mcp_notice and cfg.get('mcp_notice_dismissed'):
+            self.mcp_notice.set_visibility(False)
 
         # 若高级选项列有变更，同步更新表格列
         self._update_table_columns()
@@ -433,7 +445,10 @@ class DanbooruSearchUI:
             if not DanbooruTagger.is_ready():
                 asyncio.ensure_future(self._hide_banner_when_ready())
 
-            # ── 1. 注意事项 ──
+            # ── 1. MCP 上线通知 ──
+            self._build_mcp_notice()
+
+            # ── 2. 注意事项 ──
             self._build_notice()
 
             # ── 2. 搜索卡片 ──
@@ -458,11 +473,46 @@ class DanbooruSearchUI:
                 self.search_count_label = ui.html('正在加载数据...').classes('text-xs text-gray-400')
                 self._update_footer_text()
 
+    # ── MCP 上线通知 ──────────────────────────────────────────────────────
+
+    def _build_mcp_notice(self):
+        self.mcp_notice = ui.card().classes(
+            'w-full bg-green-50 border-l-4 border-green-500 p-0 overflow-hidden'
+        )
+        with self.mcp_notice:
+            with ui.column().classes('px-4 py-3 w-full gap-1'):
+                with ui.row().classes('items-center justify-between w-full'):
+                    ui.label('🎉 MCP 服务正式上线！').classes('text-base font-bold text-green-800')
+                    ui.button(icon='close').props('flat dense round color=grey-6') \
+                        .on_click(self._dismiss_mcp_notice)
+                ui.html(
+                    '本站现已支持通过 MCP 协议接入 AI Agent（如 Claude Desktop）。'
+                    '如需体验<b>托管版</b>（免配置、开箱即用），请访问 '
+                    '<a href="https://huggingface.co/spaces/SAkizuki/WenQiuYue" '
+                    'target="_blank" rel="noopener noreferrer" '
+                    'class="text-green-700 font-bold underline">问秋月 Space</a>，'
+                    '进入后点击「搜标签」即可调用。'
+                    '<span class="text-gray-500 ml-1">'
+                    'API 额度有限（约 30 元），用完即止，仅供体验。'
+                    '</span>'
+                    '&nbsp;&nbsp;'
+                    '<a href="https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline#mcp-接口" '
+                    'target="_blank" rel="noopener noreferrer" '
+                    'class="text-green-700 underline">查看接入文档 →</a>'
+                ).classes('text-sm text-green-900')
+
+    def _dismiss_mcp_notice(self):
+        if self.mcp_notice:
+            self.mcp_notice.set_visibility(False)
+        self._save_config()
+
     # ── 注意事项 ──────────────────────────────────────────────────────────
 
     def _build_notice(self):
         with ui.card().classes('w-full bg-orange-50 border-l-4 border-orange-500 p-0 overflow-hidden'):
             with ui.expansion(value=True).classes('w-full') as notice_expansion:
+                self.notice_expansion = notice_expansion
+                notice_expansion.on('update:model-value', lambda _: self._save_config())
                 notice_expansion.add_slot('header', '''
                     <div class="flex items-center gap-2 px-4 py-2 w-full flex-wrap">
                         <span class="text-base font-bold text-orange-800">⚠️ 注意事项 / Note</span>

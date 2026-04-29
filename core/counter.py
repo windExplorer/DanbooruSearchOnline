@@ -110,8 +110,10 @@ def _merge_history(
 _COUNTER_FILE = 'count.json'
 
 
-def _parse_remote_data(raw: bytes) -> tuple[int, int, int, int, int, dict, list, list]:
+def _parse_remote_data(raw: bytes | None) -> tuple[int, int, int, int, int, dict, list, list]:
     """解析远端 JSON bytes，返回 (total, visits, copies, mcp, successes, keywords, bad_cases, history)。"""
+    if raw is None:
+        return 0, BASE_VISITS, BASE_COPIES, 0, 0, {}, [], []
     try:
         data = json.loads(raw.decode('utf-8'))
         r_total     = int(data.get('total',     0))
@@ -163,20 +165,15 @@ def _sync_remote_task(
         print(f'[Counter] 远端读取异常，中止本次同步以保护数据: {e}')
         return False, 0, 0, 0, 0, 0, {}, [], []
 
-    if raw is not None:
-        r_total, r_visits, r_copies, r_mcp, r_successes, r_keywords, r_bad_cases, r_history = (
-            _parse_remote_data(raw)
-        )
-    else:
-        r_total, r_visits, r_copies, r_mcp, r_successes, r_keywords, r_bad_cases, r_history = (
-            0, BASE_VISITS, BASE_COPIES, 0, 0, {}, [], []
-        )
+    r_total, r_visits, r_copies, r_mcp, r_successes, r_keywords, r_bad_cases, r_history = (
+        _parse_remote_data(raw)
+    )
 
-    n_total     = max(r_total,     r_total     + adds_count)
-    n_visits    = max(r_visits,    r_visits    + adds_visits)
-    n_copies    = max(r_copies,    r_copies    + adds_copies)
-    n_mcp       = max(r_mcp,       r_mcp       + adds_mcp)
-    n_successes = max(r_successes, r_successes + adds_successes)
+    n_total     = r_total     + adds_count
+    n_visits    = r_visits    + adds_visits
+    n_copies    = r_copies    + adds_copies
+    n_mcp       = r_mcp       + adds_mcp
+    n_successes = r_successes + adds_successes
 
     merged_keywords = Counter(r_keywords)
     for word, count in adds_keywords.items():
