@@ -16,9 +16,10 @@ import json
 import os
 import re
 import time
+from collections import OrderedDict
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 import jieba
 import numpy as np
@@ -34,6 +35,30 @@ from platform_utils import (
     download_file,
     resolve_model_path,
 )
+
+
+# LRU 缓存
+class LRUCache:
+    def __init__(self, maxsize: int):
+        self._cache: OrderedDict[Any, Any] = OrderedDict()
+        self._maxsize = maxsize
+
+    def get(self, key: Any) -> Any:
+        if key not in self._cache:
+            return None
+        self._cache.move_to_end(key)
+        return self._cache[key]
+
+    def put(self, key: Any, value: Any) -> None:
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        else:
+            if len(self._cache) >= self._maxsize:
+                self._cache.popitem(last=False)
+        self._cache[key] = value
+
+    def __len__(self) -> int:
+        return len(self._cache)
 
 
 # ──────────────────────────────────────────────
@@ -164,6 +189,14 @@ class DanbooruTagger:
         self._arr_post_count: Optional[np.ndarray] = None
         self._arr_pop_score:  Optional[np.ndarray] = None
 
+        # 三层 LRU 缓存（纯内存，重启后自动重热）
+        # embedding 缓存：key=文本, value=归一化后的 1-D Tensor (D,)，约 40 MB
+        self._emb_cache:     LRUCache = LRUCache(maxsize=10_000)
+        # 搜索结果缓存：key=请求参数 tuple, value=SearchResponse，约 100 MB
+        self._search_cache:  LRUCache = LRUCache(maxsize=5_000)
+        # 关联推荐缓存：key=(seed_tuple, limit, show_nsfw), value=list[RelatedTag]，约 20 MB
+        self._related_cache: LRUCache = LRUCache(maxsize=2_000)
+
     # ── 初始化 ────────────────────────────────────────────────────────────
 
     def load(self) -> None:
@@ -277,9 +310,40 @@ class DanbooruTagger:
 
     # ── 搜索 ──────────────────────────────────────────────────────────────
 
+    def _encode_queries(self, queries: list[str]) -> torch.Tensor:
+        """批量编码查询词，命中 embedding 缓存的跳过 model.encode。"""
+        cached_vecs: list[Optional[torch.Tensor]] = [self._emb_cache.get(q) for q in queries]
+        uncached_idx = [i for i, v in enumerate(cached_vecs) if v is None]
+
+        if uncached_idx:
+            uncached_texts = [queries[i] for i in uncached_idx]
+            new_embs = self.model.encode(
+                uncached_texts, convert_to_tensor=True, show_progress_bar=False,
+            ).float()
+            new_embs = torch.nn.functional.normalize(new_embs, p=2, dim=1)
+            for j, i in enumerate(uncached_idx):
+                emb = new_embs[j]
+                self._emb_cache.put(queries[i], emb)
+                cached_vecs[i] = emb
+
+        return torch.stack(cached_vecs)  # type: ignore[arg-type]
+
     def search(self, request: SearchRequest) -> SearchResponse:
         if not self.is_loaded:
             self.load()
+
+        cache_key = (
+            request.query,
+            request.top_k,
+            request.limit,
+            request.popularity_weight,
+            request.use_segmentation,
+            tuple(sorted(request.target_layers)),
+            tuple(sorted(request.target_categories)),
+        )
+        cached = self._search_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         if request.use_segmentation:
             raw_kw   = self._smart_split(request.query)
@@ -289,9 +353,7 @@ class DanbooruTagger:
             keywords = []
             queries  = [request.query]
 
-        q_emb = self.model.encode(queries, convert_to_tensor=True, show_progress_bar=False).float()
-        # 预归一化 query，与已归一化的 self.emb_* 配合做 cosine
-        q_emb = torch.nn.functional.normalize(q_emb, p=2, dim=1)
+        q_emb = self._encode_queries(queries)
 
         tl    = request.target_layers
         k     = request.top_k
@@ -386,10 +448,12 @@ class DanbooruTagger:
 
         tags_all = ', '.join(r.tag for r in valid)
         tags_sfw = ', '.join(r.tag for r in valid if r.nsfw != '1')
-        return SearchResponse(
+        response = SearchResponse(
             tags_all=tags_all, tags_sfw=tags_sfw,
             results=valid, keywords=keywords,
         )
+        self._search_cache.put(cache_key, response)
+        return response
 
     # ── 全量构建 ──────────────────────────────────────────────────────────
 
@@ -617,6 +681,11 @@ class DanbooruTagger:
             return []
         exclude = exclude or set()
 
+        related_key = (tuple(sorted(seed_tags)), tuple(sorted(exclude)), limit, show_nsfw)
+        cached = self._related_cache.get(related_key)
+        if cached is not None:
+            return cached
+
         # 估算语料库总大小 N，取数据集中发帖量的最大值，并设置合理下限
         total_posts = float(max(self.df['post_count'].max(), 7000000.0))
 
@@ -695,6 +764,7 @@ class DanbooruTagger:
                 sources=tag_sources.get(tag_name, []),
             ))
 
+        self._related_cache.put(related_key, results)
         return results
 
     def _load_cooc(self) -> None:
