@@ -39,49 +39,144 @@ async def search_tags(
     limit: int = 80,
     popularity_weight: float = 0.15,
     show_nsfw: bool = True,
+    include_wiki: bool = False,
+    category: str = "all",
 ) -> str:
     """
 Search Danbooru tags using natural language and return a ready-to-use prompt.
 
 ## Args
-- query: Natural language description ( **Chinese recommended** ).
-- use_segmentation: True for full-scene descriptions (splits concepts). False for exact lookup, single character match, or spell correction.
-- top_k: Recall per segment. Use 5 for full scenes, 20 for precise tag lookup, 80-160 for broad concept exploration.
-	> Note: Higher top_k causes high-frequency segments to occupy more slots, potentially crowding out precise low-frequency matches.
-- limit: Max tags returned. Use 80 for generating full SDXL prompts, 10-20 for precise lookups to avoid noise.
-- popularity_weight: Influence of tag post count on ranking (0.0~1.0). Default 0.15.
+- query: Natural language description (Chinese recommended).
+- use_segmentation: Split multi-concept input into segments for separate retrieval. True for scene descriptions, False for single-concept queries.
+- top_k: Candidates recalled per segment. Semantics change with use_segmentation — see guide below.
+- limit: Max tags returned.
+- popularity_weight: Influence of tag post count on ranking (0.0–1.0). Default 0.15.
 - show_nsfw: Include NSFW tags. Default True.
+- include_wiki: Append wiki description to each result. Default False.
+- category: Filter results to a specific tag category. Default "all".
+    "all"       —  All categories (通用 + 版权 + 人物 )
+    "general"   —  General: visual attributes, clothing, pose, background, etc.
+    "copyright" —  Copyright: specific anime/game/franchise titles
+    "character" —  Character: named characters from any series
+    Use this when you know what kind of tag you need — e.g. looking for a
+    character name vs. describing a scene visually.
 
-## Parameter guide (pick the scenario that fits)
+## Query writing guide
 
-    | Scenario                         | use_segmentation | top_k  | limit |
-    |----------------------------------|------------------|--------|-------|
-    | Full scene → prompt (default)    | True             | 5      | 80    |
-    | Vague concept exploration        | Select as needed | 80     | 80    |
-    | Describe a subject / find a tag  | False            | 20     | 20    |
-    | Precise lookup / spell correction| False            | 20     | 10    |
+The `query` parameter supports explicit delimiter control for precise segmentation.
+
+### Explicit delimiters
+
+Use **spaces, newlines, Chinese commas (，), or Chinese dunhao (、)** to manually separate concepts.
+Each delimiter-bounded segment ≤7 characters stays atomic — the engine respects your intent.
+
+| Query style | Example | When to use |
+|---|---|---|
+| Concept list (spaces) | `运动社团 校队 比赛 运动会` | You know the exact concepts to search |
+| Concept list (dun hao) | `反乌托邦、赛博朋克、蒸汽朋克` | Same, with Chinese list punctuation |
+| Natural sentence | `一个穿着白色水手服的少女在雨中奔跑` | Scene description, let the engine auto-split |
+| Mixed | `运动社团 一个穿水手服的少女` | Mix concepts with descriptive phrases |
+
+Segments >7 characters are still auto-split by jieba, but the raw segment is kept as an additional query
+to preserve clause-level semantics (multi-granularity retrieval).
+
+### Recommendations
+
+1. **Concept lists → use explicit delimiters:** Group independent concepts with spaces or dunhao.
+   `运动社团 校队 比赛 体育祭 田径部` is better than `运动社团校队比赛体育祭田径部`.
+
+2. **Scene descriptions → write naturally:** Natural Chinese with Chinese commas works well for full scenes.
+   `一个穿着白色水手服，蓝色短裙的少女在雨中奔跑` — commas here are grammatical, not delimiters.
+
+3. **Precise lookup → turn off segmentation:** For finding a specific character or copyright title,
+   set `use_segmentation=False` and combine with `category` filter.
+   e.g. `query="EVA中蓝发的零号机驾驶员"` with `category="character"` and `use_segmentation=False`.
+
+4. **Category filtering:** Use `category` to narrow results. Looking for a character?
+   `category="character"`. Building a scene prompt? `category="general"`.
+
+## Parameter guide
+
+### Step 1 — Decide use_segmentation + top_k together
+
+top_k means "candidates per segment"; its effect depends on whether segmentation is on.
+
+Multi-concept input (scene description) → use_segmentation=True
+
+| Sub-scenario          | top_k | Reason                                                   |
+|-----------------------|-------|----------------------------------------------------------|
+| Full scene → prompt   | 5     | Many segments; low top_k distributes result slots fairly |
+| Vague concept explore | 80    | Few segments; high top_k needed for broad recall         |
+
+Single-concept input → use_segmentation=False
+
+top_k acts as total candidate pool size. Use 20 for all single-concept cases.
+
+| Sub-scenario                  | top_k |
+|-------------------------------|-------|
+| Describe subject / find tag   | 20    |
+| Precise lookup / spell fix    | 20    |
+
+### Step 2 — Decide limit independently
+
+| Goal                         | limit |
+|------------------------------|-------|
+| Full prompt for image gen    | 80    |
+| Concept exploration          | 20–80 |
+| Precise lookup / role search | 10–20 |
+
+### Auxiliary params
+
+popularity_weight (default 0.15, rarely needs changing):
+- Higher (0.3+): favor common, well-established tags
+- Lower (0.0): surface niche/rare tags
+
+include_wiki (default False):
+- True: tag meaning matters — disambiguation, explaining tags to user, exploring unfamiliar domains
+- False: prompt generation (wiki irrelevant to downstream), tags already known
+
+### Quick reference
+
+| Scenario                      | use_segmentation | top_k | limit |
+|-------------------------------|------------------|-------|-------|
+| Full scene → prompt (default) | True             | 5     | 80    |
+| Vague concept exploration     | True             | 80    | 80    |
+| Describe subject / find tag   | False            | 20    | 20    |
+| Precise lookup / spell fix    | False            | 20    | 10    |
+
+### Workflow
+
+After search_tags, pass selected tags to get_related_tags to discover complementary tags via co-occurrence (accessories, character features, scene atmosphere).
 
 ## Examples
 
-**Scenario 1 — Precise tag lookup / spell correction**
-e.g. "selafuku", "thighhigh", "twintail"
+Precise lookup / spell fix — e.g. "selafuku", "thighhigh", "twintail"
 → use_segmentation=False, top_k=20, limit=10
 
-**Scenario 2 — Vague concept exploration**
-e.g. "兔耳朵", "赛博朋克服装", "假肢"
+Vague concept exploration — e.g. "兔耳朵", "赛博朋克服装", "假肢"
 → use_segmentation=True, top_k=80, limit=80
 
-**Scenario 3 — Describe a subject / find a tag**
-e.g. "EVA中蓝发的零号机驾驶员", "命运石之门中的助手", "两侧有开口，有拉绳的运动短裤"
+Describe subject / find tag — e.g. "EVA中蓝发的零号机驾驶员", "命运石之门中的助手"
 → use_segmentation=False, top_k=20, limit=20
 
-**Scenario 4 — Full scene to prompt (most common use case)**
-e.g. "一个穿着白色水手服，蓝色短裙的少女在雨中的城市里奔跑"
+Full scene → prompt — e.g. "一个穿着白色水手服，蓝色短裙的少女在雨中的城市里奔跑"
 → use_segmentation=True, top_k=5, limit=80
 
 ## Returns
-JSON string with fields: prompt (comma-separated tags), keywords, results.
+JSON with: prompt (comma-separated tags), keywords, results.
+Each result: tag, cn_name, category, final_score, count[, wiki if include_wiki=True].
     """
+    _CATEGORY_MAP: dict[str, list[str]] = {
+        "all":       ["General", "Character", "Copyright", "Artist", "Meta"],
+        "general":   ["General"],
+        "character": ["Character"],
+        "copyright": ["Copyright"],
+    }
+    target_categories = _CATEGORY_MAP.get(
+        category,
+        _CATEGORY_MAP["all"],  # unrecognized value → fall back to all
+    )
+
     tagger = await DanbooruTagger.get_instance()
     request = SearchRequest(
         query=query,
@@ -90,6 +185,7 @@ JSON string with fields: prompt (comma-separated tags), keywords, results.
         popularity_weight=popularity_weight,
         show_nsfw=show_nsfw,
         use_segmentation=use_segmentation,
+        target_categories=target_categories,
     )
     response = await asyncio.to_thread(tagger.search, request)
     # 计数：每次 MCP 搜索调用均计入搜索、成功、复制；访问不变
@@ -98,16 +194,18 @@ JSON string with fields: prompt (comma-separated tags), keywords, results.
     await counter.increment_copy()
     await counter.increment_mcp()
 
-    results = [
-        {
+    results = []
+    for r in response.results:
+        item = {
             "tag":         r.tag,
             "cn_name":     r.cn_name,
             "category":    r.category,
             "final_score": r.final_score,
             "count":       r.count,
         }
-        for r in response.results
-    ]
+        if include_wiki:
+            item["wiki"] = r.wiki
+        results.append(item)
 
     payload = {
         "prompt":   response.tags_sfw if not show_nsfw else response.tags_all,

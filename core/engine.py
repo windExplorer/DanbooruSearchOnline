@@ -99,7 +99,10 @@ CAT_MAP: dict[str, str] = {
     '0': 'General', '1': 'Artist', '3': 'Copyright', '4': 'Character', '5': 'Meta',
 }
 
-SCHEMA_VERSION = 2   # 升级此值将自动触发全量重建，用于破坏性格式变更
+SCHEMA_VERSION = 3   # 升级此值将自动触发全量重建，用于破坏性格式变更
+
+# 用户显式分隔后，纯 CJK 片段超过此长度仍用 jieba 切分（避免长句被当作原子概念）
+_ATOMIC_CJK_MAX_LEN = 7
 
 # 四路 embedding 层配置: (层名, tensor 属性名, DataFrame 列名)
 _LAYER_SPEC: list[tuple[str, str, str]] = [
@@ -346,11 +349,16 @@ class DanbooruTagger:
             return cached
 
         if request.use_segmentation:
-            raw_kw   = self._smart_split(request.query)
+            raw_kw, raw_segments = self._smart_split(request.query)
             keywords = [w.strip() for w in raw_kw if w.strip() and w.strip() not in STOP_WORDS]
-            queries  = [request.query] + keywords
+            # raw_segments: 分隔符切分后的原始片段（未经 jieba），作为从句级查询插入。
+            # 排除与完整 query 相同、以及已出现在 keywords 中的片段，避免重复编码和权重膨胀。
+            keywords_set = set(keywords)
+            extra_segments = [s for s in raw_segments if s != request.query and s not in keywords_set]
+            queries = [request.query] + extra_segments + keywords
         else:
             keywords = []
+            extra_segments = []
             queries  = [request.query]
 
         q_emb = self._encode_queries(queries)
@@ -426,6 +434,22 @@ class DanbooruTagger:
                             wiki=self._arr_wiki[idx],
                         )
 
+        # ── 全句语义一致性软重排 ──────────────────────────────────────────
+        # 对每个候选标签，计算其与完整原始查询（而非分词片段）的语义相似度，
+        # 将相似度作为软因子乘入 final_score，使仅由分词碎片匹配到的噪声
+        # 标签自然下沉，同时不硬过滤任何结果。
+        full_q = q_emb[0]          # queries[0] 始终为完整原始查询
+        alpha  = 0.3 if SearchRequest.use_segmentation else 0   # 一致性调节强度（0=不调节, 1=完全按一致性重排），仅在启用分词时有意义
+        for r in final.values():
+            idx = self._name_to_idx[r.tag]
+            max_co = 0.0
+            for ln, attr, _ in _LAYER_SPEC:
+                if ln not in tl:
+                    continue
+                max_co = max(max_co, float(torch.dot(full_q, getattr(self, attr)[idx])))
+            # coherence=0 时最多扣 alpha=15%；coherence=1 时不扣分
+            r.final_score = round(r.final_score * (1.0 - alpha + alpha * max_co), 4)
+
         # 收集每个查询源的 top-1 结果（高于阈值）
         guaranteed_tags: set[str] = set()
         for source_word in queries:
@@ -450,7 +474,7 @@ class DanbooruTagger:
         tags_sfw = ', '.join(r.tag for r in valid if r.nsfw != '1')
         response = SearchResponse(
             tags_all=tags_all, tags_sfw=tags_sfw,
-            results=valid, keywords=keywords,
+            results=valid, keywords=keywords, segments=extra_segments,
         )
         self._search_cache.put(cache_key, response)
         return response
@@ -649,21 +673,68 @@ class DanbooruTagger:
             return {'英文': 1.3, '中文核心词': 1.0, '中文扩展词': 0.8, '释义': 0.6}
         return {'英文': 1.0, '中文核心词': 1.0, '中文扩展词': 1.0, '释义': 1.0}
 
-    def _smart_split(self, text: str) -> list[str]:
+    def _smart_split(self, text: str) -> tuple[list[str], list[str]]:
+        """将查询文本拆分为关键词列表，同时返回分隔后的原始片段。
+
+        两层切分：
+        1. 首先按分隔符切分——空格、换行、中文逗号/顿号/分号/句号均视为
+           用户显式指定的概念边界（中文自然语句不使用这些符号来分隔概念）。
+        2. 若只有一个片段（无显式分隔），完全走原有 jieba 逻辑。
+           若有多片段，每个纯 CJK 片段按长度决定：
+           - ≤ _ATOMIC_CJK_MAX_LEN 字 → 原子概念，直接保留
+           - >  _ATOMIC_CJK_MAX_LEN 字 → 走 jieba 切分（长短语/短句）
+           混合文本（含标点/英文）片段始终走原有逻辑。
+
+        Returns:
+            (tokens, raw_segments):
+            - tokens: 处理后的关键词列表（原子概念或 jieba 切分结果）
+            - raw_segments: 分隔符切分后的原始片段（未经 jieba），用于多粒度查询
+        """
+        segments = [s.strip() for s in re.split(r'[\s\n\r，、；。]+', text) if s.strip()]
+        if not segments:
+            return [], []
+
         tokens: list[str] = []
-        for chunk in re.split(r'([一-龥]+)', text):
-            if not chunk.strip():
+        # 单一片段 → 无显式分隔，完全走原有 jieba 逻辑
+        if len(segments) == 1:
+            segment = segments[0]
+            for chunk in re.split(r'([一-龥]+)', segment):
+                if not chunk.strip():
+                    continue
+                if re.match(r'[一-龥]+', chunk):
+                    tokens.extend(jieba.cut(chunk))
+                else:
+                    cleaned = re.sub(r'[,()\[\]{}:]', ' ', chunk)
+                    for part in cleaned.split():
+                        try:
+                            float(part)
+                        except ValueError:
+                            tokens.append(part)
+            return tokens, segments
+
+        # 多片段 → 每个分隔的片段按长度决定是否原子保留
+        for segment in segments:
+            # 纯 CJK 片段
+            if re.match(r'^[一-龥]+$', segment):
+                if len(segment) <= _ATOMIC_CJK_MAX_LEN:
+                    tokens.append(segment)          # 短 → 原子概念
+                else:
+                    tokens.extend(jieba.cut(segment))  # 长 → jieba 切分
                 continue
-            if re.match(r'[一-龥]+', chunk):
-                tokens.extend(jieba.cut(chunk))
-            else:
-                cleaned = re.sub(r'[,()\[\]{}:]', ' ', chunk)
-                for part in cleaned.split():
-                    try:
-                        float(part)
-                    except ValueError:
-                        tokens.append(part)
-        return tokens
+            # 混合文本 → 原有 jieba 切分逻辑
+            for chunk in re.split(r'([一-龥]+)', segment):
+                if not chunk.strip():
+                    continue
+                if re.match(r'[一-龥]+', chunk):
+                    tokens.extend(jieba.cut(chunk))
+                else:
+                    cleaned = re.sub(r'[,()\[\]{}:]', ' ', chunk)
+                    for part in cleaned.split():
+                        try:
+                            float(part)
+                        except ValueError:
+                            tokens.append(part)
+        return tokens, segments
 
     # ── 关联推荐 ──────────────────────────────────────────────────────────
 

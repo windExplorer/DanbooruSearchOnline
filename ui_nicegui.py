@@ -126,6 +126,7 @@ class DanbooruSearchUI:
         self.current_search_interacted = True
 
         self.full_table_data: list[dict] = []
+        self.current_segments: list[str] = []   # 从句级原始片段，用于区分 chip 颜色
         self.current_query_str: str = ""
         self.full_tags_str: str = ""
         self.full_tags_str_sfw: str = ""
@@ -959,8 +960,13 @@ class DanbooruSearchUI:
                     or (keyword == self.current_query_str and child.text == '整句')
                     or (child.text == keyword)
                 )
-                chip_color = 'primary' if selected else 'grey-4'
-                text_color = 'white' if selected else 'black'
+                is_segment = child.text in self.current_segments
+                if selected:
+                    chip_color, text_color = 'primary', 'white'
+                elif is_segment:
+                    chip_color, text_color = 'blue-1', 'blue-8'
+                else:
+                    chip_color, text_color = 'grey-4', 'black'
                 child.props(f'color={chip_color} text-color={text_color}')
 
     # ── 搜索 ──────────────────────────────────────────────────────────────
@@ -1026,6 +1032,7 @@ class DanbooruSearchUI:
             self.full_table_data = table_data
             self.full_tags_str = response.tags_all
             self.full_tags_str_sfw = response.tags_sfw
+            self.current_segments = list(response.segments) if response.segments else []
 
             # 显示结果区域
             self.results_section.set_visibility(True)
@@ -1053,6 +1060,11 @@ class DanbooruSearchUI:
                     ui.chip('整句',
                             on_click=lambda: self._filter_by_source(self.current_query_str)) \
                         .props('color=grey-4 text-color=black clickable')
+                    # 从句级原始片段（分隔符切分后未 jieba 的长片段，区别于关键词）
+                    for seg in response.segments:
+                        ui.chip(seg,
+                                on_click=lambda s=seg: self._filter_by_source(s)) \
+                            .props('color=blue-1 text-color=blue-8 clickable')
                     for kw in response.keywords:
                         ui.chip(kw,
                                 on_click=lambda k=kw: self._filter_by_source(k)) \
