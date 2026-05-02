@@ -196,6 +196,8 @@ Each result: tag, cn_name, category, final_score, count[, wiki if include_wiki=T
 
     results = []
     for r in response.results:
+        if r.nsfw == '1' and not show_nsfw:
+            continue
         item = {
             "tag":         r.tag,
             "cn_name":     r.cn_name,
@@ -226,6 +228,7 @@ async def get_related_tags(
     tags: list[str],
     limit: int = 20,
     show_nsfw: bool = True,
+    include_wiki: bool = False,
 ) -> str:
     """
 Return co-occurrence-based tag recommendations for a given tag list (NPMI scoring).
@@ -243,9 +246,11 @@ Args:
     tags:      List of Danbooru tag names, e.g. ["white_serafuku", "sailor_collar"].
     limit:     Maximum number of recommendations returned.
     show_nsfw: Whether to include NSFW tags. Defaults to True.
+    include_wiki: Append wiki description to each result. Default False.
 
 Returns:
     A JSON string containing recommended tags sorted by NPMI co-occurrence score.
+    Each result: tag, cn_name, category, count, cooc_score, sources[, wiki if include_wiki=True].
     """
     tagger = await DanbooruTagger.get_instance()
     results = await asyncio.to_thread(
@@ -261,13 +266,18 @@ Returns:
     await counter.increment_copy()
     await counter.increment_mcp()
 
-    return json.dumps([
-        {
+    output = []
+    for r in results:
+        item = {
             "tag":        r.tag,
             "cn_name":    r.cn_name,
             "category":   r.category,
+            "count":      r.post_count,
             "cooc_score": r.cooc_score,
             "sources":    r.sources,
         }
-        for r in results
-    ], ensure_ascii=False, indent=2)
+        if include_wiki:
+            item["wiki"] = r.wiki
+        output.append(item)
+
+    return json.dumps(output, ensure_ascii=False, indent=2)

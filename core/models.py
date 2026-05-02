@@ -30,6 +30,8 @@ class RelatedTag:
     cooc_count: int       # 累计共现次数
     cooc_score: float     # 归一化分数
     sources: list[str] = field(default_factory=list)  # 触发该推荐的种子 tag 列表
+    post_count: int = 0   # 该标签的发帖总数（与 search_tags 的 count 对齐）
+    wiki: str = ""        # 标签 wiki 描述
 
 
 @dataclass

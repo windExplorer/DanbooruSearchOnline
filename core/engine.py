@@ -833,6 +833,8 @@ class DanbooruTagger:
                 cooc_count=total_cooc[tag_name],
                 cooc_score=round(raw_score / max_score, 4),
                 sources=tag_sources.get(tag_name, []),
+                post_count=int(self._arr_post_count[idx]),
+                wiki=str(self._arr_wiki[idx]) if self._arr_wiki is not None else '',
             ))
 
         self._related_cache.put(related_key, results)
