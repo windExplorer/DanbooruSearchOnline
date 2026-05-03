@@ -132,8 +132,8 @@ popularity_weight (default 0.15, rarely needs changing):
 - Lower (0.0): surface niche/rare tags
 
 include_wiki (default False):
-- True: tag meaning matters — disambiguation, explaining tags to user, exploring unfamiliar domains
-- False: prompt generation (wiki irrelevant to downstream), tags already known
+- True: The meaning of the tag is important — disambiguation, explaining tags to users, exploring unfamiliar domains, or when you are unsure of the tag's meaning
+- False: Prompt generation (Wiki is irrelevant to the downstream task), tags are known
 
 ### Quick reference
 
@@ -147,6 +147,8 @@ include_wiki (default False):
 ### Workflow
 
 After search_tags, pass selected tags to get_related_tags to discover complementary tags via co-occurrence (accessories, character features, scene atmosphere).
+Supports chained exploration / iterative loops – take the interesting tags from the returned results as input to call get_related_tags again,
+and use the results from get_related to feed back into a new round of search, enabling multi-hop deep traversal along the co-occurrence graph.
 
 ## Examples
 
@@ -233,6 +235,8 @@ async def get_related_tags(
     """
 Return co-occurrence-based tag recommendations for a given tag list (NPMI scoring).
 Typical workflow: call search_tags first, then pass selected tags here to discover complementary ones.
+Supports chained exploration / iterative loops – take the interesting tags from the returned results as input to call get_related_tags again,
+and use the results from get_related to feed back into a new round of search, enabling multi-hop deep traversal along the co-occurrence graph.
 
 Works well for: clothing accessories, character visual features, theme exploration, multi-tag intersections.
     e.g. tags=["fingerless_gloves"] → returns characters often wearing them

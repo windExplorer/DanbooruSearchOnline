@@ -214,6 +214,24 @@ def upload_bytes(
 _MS_WORKDIR = Path('/home/user/app')
 
 
+#  HF Storage Bucket 挂载检测
+
+# HF Storage Buckets 挂载到 Space 时，会映射到容器内的一个本地路径
+# （通常为 /data），文件可直接以本地路径读取，无需 hf_hub_download。
+_HF_BUCKET_MOUNT = Path('/data')
+
+
+def get_hf_bucket_path(relative: str) -> Optional[Path]:
+    """
+    如果 HF Storage Bucket 已挂载且目标文件存在，返回本地绝对路径。
+    否则返回 None（调用方应 fallback 到 hf_hub_download）。
+    """
+    candidate = _HF_BUCKET_MOUNT / relative
+    if candidate.exists():
+        return candidate
+    return None
+
+
 def download_file(
     filename: str,
     *,
@@ -230,7 +248,9 @@ def download_file(
     下载单个引擎数据文件，返回本地绝对路径字符串。
 
     HF 平台：
-        从 Space repo 下载，hf_repo_id 默认读取环境变量 SPACE_ID。
+        优先从挂载的 Storage Bucket（/data）读取本地文件（零延迟）。
+        若 Bucket 未挂载或文件不存在，回退到从 Space repo 下载
+        （hf_repo_id 默认读取环境变量 SPACE_ID）。
 
     MS 平台：
         文件已随 studio repo 部署到容器本地，直接返回工作目录下的路径，
@@ -240,6 +260,13 @@ def download_file(
         直接返回原始路径。
     """
     if PLATFORM == 'hf':
+        # 优先从挂载的 Storage Bucket 读取（本地路径，零延迟）
+        bucket_path = get_hf_bucket_path(filename)
+        if bucket_path is not None:
+            print(f'[PlatformUtils] 从 Storage Bucket 读取: {bucket_path}')
+            return str(bucket_path)
+
+        # Bucket 未挂载或文件不存在，回退到从 Space repo 下载
         from huggingface_hub import hf_hub_download
         repo_id = hf_repo_id or os.environ.get('SPACE_ID')
         if not repo_id:
