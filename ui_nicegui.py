@@ -727,6 +727,7 @@ class DanbooruSearchUI:
             ui.notify('权重范围为 0.1 ~ 1.9，已到达最大值', type='warning', timeout=2000)
             return
         self.tag_weights[tag] = new_w
+        self._save_staged_tags()
         self._render_selected_chips()
 
     def _remove_selected_tag(self, tag: str):
@@ -747,7 +748,10 @@ class DanbooruSearchUI:
         tags = self._get_selected_tags()
         weights = {t: self.tag_weights.get(t, 1.0) for t in tags}
         data = _json.dumps({'tags': tags, 'weights': weights}, ensure_ascii=False)
-        ui.run_javascript(f"localStorage.setItem('{self._STAGED_LS_KEY}', {_json.dumps(data)});")
+        try:
+            ui.run_javascript(f"localStorage.setItem('{self._STAGED_LS_KEY}', {_json.dumps(data)});")
+        except RuntimeError:
+            pass  # 事件上下文已销毁（UI 重建中），数据仍在内存里，下次保存时会同步
 
     async def _restore_staged_tags(self):
         """从 localStorage 恢复已选标签。"""
@@ -1178,8 +1182,9 @@ class DanbooruSearchUI:
         all_tags = self._get_selected_tags()
         if self.selection_count_label is not None:
             self.selection_count_label.text = str(len(all_tags))
-        self._render_selected_chips()
+        # 先保存再重建 UI，避免 clear() 销毁事件上下文后 run_javascript 失败
         self._save_staged_tags()
+        self._render_selected_chips()
 
     def _update_selection_display(self, _e):
         if self.result_table is None:
