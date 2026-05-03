@@ -665,6 +665,8 @@ class DanbooruSearchUI:
                                 '<b>NAI</b>：<code>1.2::tag::</code>'
                             ).style('font-size:13px;line-height:1.7;')
                     self.format_toggle_btn.on_click(self._toggle_prompt_format)
+                    clear_btn = ui.button('清空已选', icon='delete_sweep').props('dense flat color=red-7').classes('text-xs')
+                    clear_btn.on_click(self._clear_all_staged)
                     copy_btn = ui.button('复制选中', icon='content_copy').props('dense unelevated color=primary')
                     copy_btn.on_click(self.copy_selection)
 
@@ -735,6 +737,58 @@ class DanbooruSearchUI:
             current.remove(tag)
         self.tag_weights.pop(tag, None)
         self._set_selected_tags(current)
+
+    # ── 备选区持久化 ─────────────────────────────────────────────────────
+
+    _STAGED_LS_KEY = 'danbooru_staged_tags'
+
+    def _save_staged_tags(self):
+        """将已选标签及其权重保存到 localStorage。"""
+        tags = self._get_selected_tags()
+        weights = {t: self.tag_weights.get(t, 1.0) for t in tags}
+        data = _json.dumps({'tags': tags, 'weights': weights}, ensure_ascii=False)
+        ui.run_javascript(f"localStorage.setItem('{self._STAGED_LS_KEY}', {_json.dumps(data)});")
+
+    async def _restore_staged_tags(self):
+        """从 localStorage 恢复已选标签。"""
+        try:
+            raw = await ui.run_javascript(
+                f"localStorage.getItem('{self._STAGED_LS_KEY}');",
+                timeout=5.0,
+            )
+        except Exception:
+            return
+        if not raw:
+            return
+        try:
+            data = _json.loads(raw)
+        except Exception:
+            return
+        tags = data.get('tags', [])
+        weights = data.get('weights', {})
+        if not tags:
+            return
+        self.chip_extra_selected.update(tags)
+        for t in tags:
+            self.tag_weights[t] = weights.get(t, 1.0)
+        self._render_selected_chips()
+        if self.selection_count_label is not None:
+            self.selection_count_label.text = str(len(tags))
+
+    def _clear_all_staged(self):
+        """清空所有已选标签。"""
+        self._mark_interaction()
+        self.chip_extra_selected.clear()
+        self.tag_weights.clear()
+        if self.result_table is not None:
+            self.result_table.selected = []
+        self._render_selected_chips()
+        if self.selection_count_label is not None:
+            self.selection_count_label.text = '0'
+        show_nsfw_val = self.input_nsfw.value
+        self._refresh_related([], show_nsfw_val)
+        self._save_staged_tags()
+        ui.notify('已清空所有已选标签', type='warning')
 
         # ── 两栏结果（CSS 强制并排）──────────────────────────────────────────
 
@@ -1040,11 +1094,14 @@ class DanbooruSearchUI:
             _saved_rpp = self._get_rows_per_page()
             self.result_table.rows = apply_nsfw_filter(table_data, show_nsfw_val)
             self._set_rows_per_page(_saved_rpp)
-            self.result_table.selected = []
-            self.tag_weights.clear()
+            # 搜索时保留已选标签（跨搜索积累）
+            all_selected = self._get_selected_tags()
             self.chip_extra_selected.clear()
+            self.chip_extra_selected.update(all_selected)
+            self.result_table.selected = []
             self._render_selected_chips()
             self._update_selection_display(None)
+            self._save_staged_tags()
 
             # 清空关联推荐
             self._refresh_related([], show_nsfw_val)
@@ -1122,6 +1179,7 @@ class DanbooruSearchUI:
         if self.selection_count_label is not None:
             self.selection_count_label.text = str(len(all_tags))
         self._render_selected_chips()
+        self._save_staged_tags()
 
     def _update_selection_display(self, _e):
         if self.result_table is None:
@@ -1148,6 +1206,7 @@ class DanbooruSearchUI:
         else:
             self.chip_extra_selected.clear()
             self._refresh_related([], show_nsfw_val)
+        self._save_staged_tags()
 
     def _on_related_checkbox_change(self, tag: str, checked: bool):
         self._mark_interaction()
@@ -1308,6 +1367,8 @@ async def main_page():
 
     # 恢复用户配置（在页面渲染完成后执行）
     await app_ui._restore_config()
+    # 恢复已选标签（备选区）
+    await app_ui._restore_staged_tags()
 
 
 # ── 入口 ───────────────────────────────────────────────────────────────────────
