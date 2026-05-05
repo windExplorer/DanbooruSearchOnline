@@ -16,3 +16,5 @@ tempsave/
 eval/
 legacy_history.json
 CLAUDE.md
+*.zip
+.claude/

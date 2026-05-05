@@ -259,6 +259,8 @@ class DanbooruSearchUI:
     async def _restore_config(self):
         """从 localStorage 读取配置并恢复控件状态。"""
         try:
+            if getattr(ui.context.client, '_deleted', False):
+                return
             raw = await ui.run_javascript(
                 f"localStorage.getItem('{_CONFIG_LS_KEY}');",
                 timeout=5.0,
@@ -749,6 +751,8 @@ class DanbooruSearchUI:
         weights = {t: self.tag_weights.get(t, 1.0) for t in tags}
         data = _json.dumps({'tags': tags, 'weights': weights}, ensure_ascii=False)
         try:
+            if getattr(ui.context.client, '_deleted', False):
+                return
             ui.run_javascript(f"localStorage.setItem('{self._STAGED_LS_KEY}', {_json.dumps(data)});")
         except RuntimeError:
             pass  # 事件上下文已销毁（UI 重建中），数据仍在内存里，下次保存时会同步
@@ -756,6 +760,8 @@ class DanbooruSearchUI:
     async def _restore_staged_tags(self):
         """从 localStorage 恢复已选标签。"""
         try:
+            if getattr(ui.context.client, '_deleted', False):
+                return
             raw = await ui.run_javascript(
                 f"localStorage.getItem('{self._STAGED_LS_KEY}');",
                 timeout=5.0,

@@ -228,33 +228,52 @@ Each result: tag, cn_name, category, final_score, count[, wiki if include_wiki=T
 @mcp.tool()
 async def get_related_tags(
     tags: list[str],
-    limit: int = 20,
+    limit: int = 50,
     show_nsfw: bool = True,
     include_wiki: bool = False,
 ) -> str:
     """
 Return co-occurrence-based tag recommendations for a given tag list (NPMI scoring).
-Typical workflow: call search_tags first, then pass selected tags here to discover complementary ones.
-Supports chained exploration / iterative loops – take the interesting tags from the returned results as input to call get_related_tags again,
-and use the results from get_related to feed back into a new round of search, enabling multi-hop deep traversal along the co-occurrence graph.
 
-Works well for: clothing accessories, character visual features, theme exploration, multi-tag intersections.
-    e.g. tags=["fingerless_gloves"] → returns characters often wearing them
-    e.g. tags=["amiya_(arknights)"] → returns outfit, expression, accessory tags
-         that define this character's appearance
-    e.g. tags=["fighter_jet"] → returns aircraft types, action, background tags
-    e.g. tags=["maid", "twintails"] → returns tags specific to the
-         "maid + twintails" combination, not just each tag individually
+This tool surfaces tags that frequently appear alongside the seeds in
+Danbooru, mixing categories (General / Character / Copyright) by design.
 
-Args:
-    tags:      List of Danbooru tag names, e.g. ["white_serafuku", "sailor_collar"].
-    limit:     Maximum number of recommendations returned.
-    show_nsfw: Whether to include NSFW tags. Defaults to True.
-    include_wiki: Append wiki description to each result. Default False.
+## Typical use cases
 
-Returns:
-    A JSON string containing recommended tags sorted by NPMI co-occurrence score.
-    Each result: tag, cn_name, category, count, cooc_score, sources[, wiki if include_wiki=True].
+- Attribute → characters who have it
+  e.g. ["fingerless_gloves"] → tifa_lockhart, cammy_white, bridget_(guilty_gear), ...
+- Work → characters in it
+  e.g. ["overlord_(maruyama)"] → shalltear_bloodfallen, ainz_ooal_gown, albedo_(overlord), ...
+- Character → their visual attributes
+  e.g. ["amiya_(arknights)"] → outfits, expressions, accessories
+- Theme exploration
+  e.g. ["fighter_jet"] → aircraft types, actions, backgrounds
+- Multi-tag intersection
+  e.g. ["maid", "twintails"] → tags specific to the combination, scored by summed NPMI
+
+For within-category exploration (e.g. "more clothing tags like X"), use search_tags
+with the `category` parameter instead.
+
+## Workflow
+
+Chain freely: search_tags → get_related_tags → get_related_tags → search_tags.
+Each hop along the co-occurrence graph reveals tags unreachable by semantic search alone.
+
+## Args
+
+- tags: List of canonical Danbooru tag names (underscores, no spaces).
+        e.g. ["white_serafuku", "sailor_collar"]
+- limit: Max recommendations returned. Default 50.
+- show_nsfw: Include NSFW tags. Default True.
+- include_wiki: Append wiki description to each result. Default False.
+        Set True when result tags are unfamiliar and need disambiguation.
+
+## Returns
+
+JSON array sorted by aggregated NPMI score (descending). Each result:
+- tag, cn_name, category, count (post_count), cooc_score (normalized to [0,1])
+- sources: seed tags that contributed to this score
+- wiki: only if include_wiki=True
     """
     tagger = await DanbooruTagger.get_instance()
     results = await asyncio.to_thread(
