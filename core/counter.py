@@ -365,6 +365,7 @@ async def add_bad_case(query: str, platform: str = '', settings: dict | None = N
         entry['platform'] = platform
     if settings:
         entry['settings'] = settings
+    print(f'[Counter] bad_case 上报: {json.dumps(entry, ensure_ascii=False)}')
     _memory_bad_cases.insert(0, entry)
     if len(_memory_bad_cases) > MAX_BAD_CASES:
         _memory_bad_cases[:] = _memory_bad_cases[:MAX_BAD_CASES]

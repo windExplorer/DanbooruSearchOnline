@@ -1040,6 +1040,18 @@ class DanbooruSearchUI:
         if not query:
             return
 
+        # 搜索前校验数值参数
+        _err_fields = []
+        if self.input_top_k and (self.input_top_k.value is None or str(self.input_top_k.value).strip() == ''):
+            _err_fields.append('Top K')
+        if self.input_limit and (self.input_limit.value is None or str(self.input_limit.value).strip() == ''):
+            _err_fields.append('返回数量')
+        if self.input_weight and (self.input_weight.value is None or str(self.input_weight.value).strip() == ''):
+            _err_fields.append('热度权重')
+        if _err_fields:
+            ui.notify(f'请填写：{"、".join(_err_fields)}', type='negative', timeout=3000)
+            return
+
         # 搜索前保存配置
         self._save_config()
 

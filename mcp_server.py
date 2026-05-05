@@ -276,10 +276,52 @@ JSON array sorted by aggregated NPMI score (descending). Each result:
 - wiki: only if include_wiki=True
     """
     tagger = await DanbooruTagger.get_instance()
+
+    # ── 检查标签是否存在，不存在则尝试 search_tags 纠错 ──────────────────
+    valid_tags = []
+    invalid_tags = []
+    for t in tags:
+        if t in tagger._name_to_idx:
+            valid_tags.append(t)
+        else:
+            invalid_tags.append(t)
+
+    corrections = {}
+    if invalid_tags:
+        for bad_tag in invalid_tags:
+            try:
+                req = SearchRequest(
+                    query=bad_tag,
+                    top_k=5,
+                    limit=5,
+                    popularity_weight=0.15,
+                    use_segmentation=False,
+                    target_layers=['英文']
+                )
+                resp = await asyncio.to_thread(tagger.search, req)
+                if resp.results:
+                    corrections[bad_tag] = resp.results[0].tag
+            except Exception:
+                pass
+
+    if not valid_tags and not corrections:
+        return json.dumps({
+            "error": "所有传入的标签均不存在于标签表中",
+            "invalid_tags": invalid_tags,
+        }, ensure_ascii=False, indent=2)
+
+    # 用纠错后的标签替换无效标签
+    corrected_tags = []
+    for t in tags:
+        if t in valid_tags:
+            corrected_tags.append(t)
+        elif t in corrections:
+            corrected_tags.append(corrections[t])
+
     results = await asyncio.to_thread(
         tagger.get_related,
-        tags,
-        set(tags),
+        corrected_tags,
+        set(corrected_tags),
         limit,
         show_nsfw,
     )
@@ -303,4 +345,15 @@ JSON array sorted by aggregated NPMI score (descending). Each result:
             item["wiki"] = r.wiki
         output.append(item)
 
-    return json.dumps(output, ensure_ascii=False, indent=2)
+    payload = output
+    if corrections:
+        correction_notes = [
+            f"{bad} → {good}" for bad, good in corrections.items()
+        ]
+        payload = {
+            "correction_note": "标签拼写错误，已经纠错: " + ", ".join(correction_notes),
+            "corrections": corrections,
+            "results": output,
+        }
+
+    return json.dumps(payload, ensure_ascii=False, indent=2)
