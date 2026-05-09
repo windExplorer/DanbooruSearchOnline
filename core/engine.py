@@ -185,6 +185,7 @@ class DanbooruTagger:
         self._name_to_idx: dict[str, int]                         = {}
         self._tag_to_groups: dict[str, set[str]]                  = {}
         self._group_to_tags_idx: dict[str, np.ndarray]            = {}
+        self._group_cn_names: dict[str, str]                      = {}
         self.is_loaded:     bool                                  = False
 
         # 预提取的列数组，避免热点路径上反复执行 df.iloc[idx]
@@ -965,8 +966,10 @@ class DanbooruTagger:
                 })
 
             tags.sort(key=lambda x: -x['post_count'])
+            cn_name = self._group_cn_names.get(group_name, group_name)
             results.append({
                 'group': group_name,
+                'group_cn_name': cn_name,
                 'hit_count': hit_count,
                 'tags': tags,
             })
@@ -1057,5 +1060,8 @@ class DanbooruTagger:
             g: np.array(idxs, dtype=np.int64) for g, idxs in group_members.items()
         }
 
+        self._group_cn_names = data.get('group_cn_names', {})
+
         print(f'[Engine] Tag Group loaded, {len(self._tag_to_groups)} tags, '
-              f'{len(self._group_to_tags_idx)} groups')
+              f'{len(self._group_to_tags_idx)} groups, '
+              f'{len(self._group_cn_names)} cn_names')

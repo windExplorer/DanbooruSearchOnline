@@ -510,7 +510,7 @@ class DanbooruSearchUI:
         with self.mcp_notice:
             with ui.column().classes('px-4 py-3 w-full gap-2'):
                 with ui.row().classes('items-center justify-between w-full'):
-                    ui.label('🧪 新功能：同类标签扩展（beta）').classes('text-sm font-bold text-green-800')
+                    ui.label('🧪 新功能：标签组扩展（beta）').classes('text-sm font-bold text-green-800')
                     ui.button(icon='close').props('flat dense round color=grey-6') \
                         .on_click(self._dismiss_mcp_notice)
                 ui.html(
@@ -520,8 +520,8 @@ class DanbooruSearchUI:
                 ).classes('text-xs text-green-900')
                 ui.separator().classes('my-1')
                 ui.html(
-                    'MCP 服务已上线 — 支持通过 MCP 协议接入 AI Agent（如 Claude Desktop）。'
-                    '托管版体验 → '
+                    '【MCP 服务已上线】 支持通过 MCP 协议接入 AI Agent（如 Claude Desktop）。'
+                    '免配置托管版体验：'
                     '<a href="https://huggingface.co/spaces/SAkizuki/WenQiuYue" '
                     'target="_blank" rel="noopener noreferrer" '
                     'class="text-green-700 font-bold underline">问秋月 Space</a>，'
@@ -1282,9 +1282,20 @@ class DanbooruSearchUI:
         all_tags = self._get_selected_tags()
         if self.selection_count_label is not None:
             self.selection_count_label.text = str(len(all_tags))
-        # 先保存再重建 UI，避免 clear() 销毁事件上下文后 run_javascript 失败
         self._save_staged_tags()
         self._render_selected_chips()
+        # 显式刷新关联推荐和 Group 区域（不依赖 table.on('selection') 事件，
+        # 因为在 chip 点击回调上下文中该事件可能不可靠）
+        show_nsfw_val = self.input_nsfw.value
+        if all_tags:
+            self._refresh_related_from_selection(all_tags, show_nsfw_val)
+        else:
+            self.chip_extra_selected.clear()
+            self._refresh_related([], show_nsfw_val)
+            if self.group_expansion_container is not None:
+                self.group_expansion_container.clear()
+                with self.group_expansion_container:
+                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
     def _update_selection_display(self, _e):
         if self.result_table is None:
@@ -1311,6 +1322,11 @@ class DanbooruSearchUI:
         else:
             self.chip_extra_selected.clear()
             self._refresh_related([], show_nsfw_val)
+            # 清空 Group 同类扩展（与 _clear_all_staged 保持一致）
+            if self.group_expansion_container is not None:
+                self.group_expansion_container.clear()
+                with self.group_expansion_container:
+                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
         self._save_staged_tags()
 
     def _on_related_checkbox_change(self, tag: str, checked: bool):
@@ -1401,11 +1417,11 @@ class DanbooruSearchUI:
         with self.group_expansion_container:
             for group_info in group_data:
                 group_name = group_info['group']
+                group_cn = group_info.get('group_cn_name', group_name.replace('tag_group:', ''))
                 tags = group_info['tags']
-                display_name = group_name.replace('tag_group:', '')
 
                 with ui.expansion(
-                    f'{display_name} ({len(tags)} 个标签)',
+                    f'{group_cn} ({len(tags)} 个标签)',
                     icon='label',
                 ).classes('w-full').props('dense'):
                     with ui.element('div').classes('w-full grid grid-cols-2 gap-1 p-1').style('max-height: 600px; overflow-y: auto;'):
@@ -1415,11 +1431,18 @@ class DanbooruSearchUI:
                             cat = t['category']
                             wiki_text = str(t.get('wiki', ''))
                             bg_normal, bg_selected, text_color = CAT_STYLE.get(cat, default_style)
+                            nsfw_blocked = (t.get('nsfw') == '1') and not show_nsfw
 
-                            # 色块容器
-                            chip = ui.element('div').classes(
-                                'rounded cursor-pointer transition-all duration-150 px-2 py-1.5'
-                            ).style(f'background-color: {bg_normal}; color: {text_color};')
+                            # NSFW 时移除 pointer、使用模糊样式
+                            chip_classes = 'rounded transition-all duration-150 px-2 py-1.5'
+                            if nsfw_blocked:
+                                chip_classes += ' nsfw-blur-cell'
+                            else:
+                                chip_classes += ' cursor-pointer'
+
+                            chip = ui.element('div').classes(chip_classes).style(
+                                f'background-color: {bg_normal}; color: {text_color};'
+                            )
 
                             with chip:
                                 with ui.row().classes('items-center gap-1 w-full'):
@@ -1436,26 +1459,27 @@ class DanbooruSearchUI:
                                 if cn_first:
                                     ui.label(cn_first).classes('text-xs opacity-70 truncate block')
 
-                            # Wiki tooltip
-                            if wiki_text:
+                            # Wiki tooltip（NSFW 不显示）
+                            if wiki_text and not nsfw_blocked:
                                 with chip:
                                     with ui.tooltip().props('content-class="bg-black text-white shadow-4" max-width="400px"'):
                                         ui.html(wiki_text).style('font-size:13px;line-height:1.4;max-width:380px;')
 
-                            # 点击选中/取消
-                            is_selected = [False]
+                            # 点击选中/取消（NSFW 不响应点击）
+                            if not nsfw_blocked:
+                                is_selected = [False]
 
-                            def _toggle(e, _chip=chip, _tag=tag, _bg_n=bg_normal, _bg_s=bg_selected):
-                                if is_selected[0]:
-                                    _chip.style(f'background-color: {_bg_n};')
-                                    self.chip_extra_selected.discard(_tag)
-                                else:
-                                    _chip.style(f'background-color: {_bg_s};')
-                                    self.chip_extra_selected.add(_tag)
-                                is_selected[0] = not is_selected[0]
-                                self._render_selected_chips()
+                                def _toggle(e, _chip=chip, _tag=tag, _bg_n=bg_normal, _bg_s=bg_selected):
+                                    if is_selected[0]:
+                                        _chip.style(f'background-color: {_bg_n};')
+                                        self.chip_extra_selected.discard(_tag)
+                                    else:
+                                        _chip.style(f'background-color: {_bg_s};')
+                                        self.chip_extra_selected.add(_tag)
+                                    is_selected[0] = not is_selected[0]
+                                    self._render_selected_chips()
 
-                            chip.on('click', _toggle)
+                                chip.on('click', _toggle)
 
     # ── 表格列动态更新 ──────────────────────────────────────────────────
 
@@ -1634,6 +1658,7 @@ if __name__ in {'__main__', '__mp_main__'}:
         global _mcp_lifespan_ctx
         if _mcp_lifespan_ctx is not None:
             await _mcp_lifespan_ctx.__aexit__(None, None, None)
+
 
     @app.get('/googlebd34b54f8562aa06.html')
     def google_verification():
