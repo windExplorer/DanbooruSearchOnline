@@ -1266,7 +1266,7 @@ class DanbooruSearchUI:
         extra = [t for t in self.chip_extra_selected if t not in seen]
         return table_tags + extra
 
-    def _set_selected_tags(self, tags: list[str]):
+    def _set_selected_tags(self, tags: list[str], skip_refresh: bool = False):
         tag_set = set(tags)
         table_tag_set = {row['tag'] for row in self.result_table.rows} if self.result_table else set()
         self.chip_extra_selected.clear()
@@ -1285,17 +1285,19 @@ class DanbooruSearchUI:
         self._save_staged_tags()
         self._render_selected_chips()
         # 显式刷新关联推荐和 Group 区域（不依赖 table.on('selection') 事件，
-        # 因为在 chip 点击回调上下文中该事件可能不可靠）
-        show_nsfw_val = self.input_nsfw.value
-        if all_tags:
-            self._refresh_related_from_selection(all_tags, show_nsfw_val)
-        else:
-            self.chip_extra_selected.clear()
-            self._refresh_related([], show_nsfw_val)
-            if self.group_expansion_container is not None:
-                self.group_expansion_container.clear()
-                with self.group_expansion_container:
-                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
+        # 因为在 chip 点击回调上下文中该事件可能不可靠）。
+        # 从关联推荐勾选时跳过，由用户手动点击「根据已选刷新」触发。
+        if not skip_refresh:
+            show_nsfw_val = self.input_nsfw.value
+            if all_tags:
+                self._refresh_related_from_selection(all_tags, show_nsfw_val)
+            else:
+                self.chip_extra_selected.clear()
+                self._refresh_related([], show_nsfw_val)
+                if self.group_expansion_container is not None:
+                    self.group_expansion_container.clear()
+                    with self.group_expansion_container:
+                        ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
     def _update_selection_display(self, _e):
         if self.result_table is None:
@@ -1336,13 +1338,13 @@ class DanbooruSearchUI:
             if tag not in current:
                 current.append(tag)
                 self.tag_weights.setdefault(tag, 1.0)
-                self._set_selected_tags(current)
+                self._set_selected_tags(current, skip_refresh=True)
                 ui.notify(f'已添加 {tag}', type='positive', timeout=1500)
         else:
             if tag in current:
                 current.remove(tag)
                 self.tag_weights.pop(tag, None)
-                self._set_selected_tags(current)
+                self._set_selected_tags(current, skip_refresh=True)
                 ui.notify(f'已移除 {tag}', type='warning', timeout=1500)
 
     def _manual_refresh_related(self):
@@ -1658,6 +1660,22 @@ if __name__ in {'__main__', '__mp_main__'}:
         global _mcp_lifespan_ctx
         if _mcp_lifespan_ctx is not None:
             await _mcp_lifespan_ctx.__aexit__(None, None, None)
+
+
+    @app.get('/googlebd34b54f8562aa06.html')
+    def google_verification():
+        return PlainTextResponse('google-site-verification: googlebd34b54f8562aa06.html')
+
+    @app.get('/robots.txt')
+    def robots_txt():
+        content = (
+            'User-agent: *\n'
+            'Allow: /$\n'
+            'Disallow: /api/\n'
+            'Disallow: /_nicegui/\n'
+            'Disallow: /socket.io/\n'
+        )
+        return PlainTextResponse(content)
 
 
     @app.get('/googlebd34b54f8562aa06.html')
