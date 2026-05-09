@@ -33,6 +33,8 @@ async def cmd_search(args):
         use_segmentation=not args.no_seg,
         target_layers=args.layers,
         target_categories=args.categories,
+        group_mode=args.group_mode,
+        max_per_group=args.max_per_group,
     )
     resp = await asyncio.to_thread(tagger.search, request)
 
@@ -61,6 +63,7 @@ async def cmd_related(args):
         set(seed_tags),   # exclude 种子标签自身
         args.limit,
         not args.no_nsfw,
+        not args.no_group_expansion,
     )
 
     if not results:
@@ -114,6 +117,10 @@ async def main():
     p_search.add_argument('--weight',  type=float, default=0.15, help='热度权重（默认 0.15）')
     p_search.add_argument('--no-nsfw', action='store_true',      help='过滤 NSFW 内容')
     p_search.add_argument('--no-seg',  action='store_true',      help='禁用智能分词')
+    p_search.add_argument('--group-mode', choices=['off', 'expand', 'diverse'],
+                           default='off', help='Group 处理模式（默认 off）')
+    p_search.add_argument('--max-per-group', type=int, default=2,
+                           help='diverse 模式下每个 group 最多保留的标签数（默认 2）')
     p_search.add_argument(
         '--layers', nargs='+', default=_all_layers,
         metavar='LAYER',
@@ -131,6 +138,8 @@ async def main():
     p_related.add_argument('--limit',        type=int, default=50, help='推荐结果上限（默认 50）')
     p_related.add_argument('--no-nsfw',      action='store_true',  help='过滤 NSFW 内容')
     p_related.add_argument('--show-sources', action='store_true',  help='显示每条推荐由哪个种子触发')
+    p_related.add_argument('--no-group-expansion', action='store_true',
+                            help='关闭 group 同类扩展（默认开启）')
 
     args = parser.parse_args()
     if args.cmd == 'search':

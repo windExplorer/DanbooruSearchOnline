@@ -46,6 +46,8 @@ class SearchIn(BaseModel):
     use_segmentation: bool = True
     target_layers: list[str] = ['英文', '中文扩展词', '释义', '中文核心词']
     target_categories: list[str] = ['General', 'Character', 'Copyright']
+    group_mode: str = "off"
+    max_per_group: int = 2
 
 
 class TagOut(BaseModel):

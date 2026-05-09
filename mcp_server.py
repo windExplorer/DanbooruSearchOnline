@@ -41,6 +41,8 @@ async def search_tags(
     show_nsfw: bool = True,
     include_wiki: bool = False,
     category: str = "all",
+    group_mode: str = "off",
+    max_per_group: int = 2,
 ) -> str:
     """
 Search Danbooru tags using natural language and return a ready-to-use prompt.
@@ -60,6 +62,11 @@ Search Danbooru tags using natural language and return a ready-to-use prompt.
     "character" —  Character: named characters from any series
     Use this when you know what kind of tag you need — e.g. looking for a
     character name vs. describing a scene visually.
+- group_mode: Tag group processing mode. Default "off".
+    "off"     — No group processing (backward compatible)
+    "expand"  — Boost same-group tags for concept exploration
+    "diverse" — Limit tags per group for scene diversity
+- max_per_group: Max tags per group in diverse mode. Default 2.
 
 ## Query writing guide
 
@@ -188,6 +195,8 @@ Each result: tag, cn_name, category, final_score, count[, wiki if include_wiki=T
         show_nsfw=show_nsfw,
         use_segmentation=use_segmentation,
         target_categories=target_categories,
+        group_mode=group_mode,
+        max_per_group=max_per_group,
     )
     response = await asyncio.to_thread(tagger.search, request)
     # 计数：每次 MCP 搜索调用均计入搜索、成功、复制；访问不变

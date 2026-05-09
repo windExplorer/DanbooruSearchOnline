@@ -49,6 +49,8 @@ class SearchRequest:
     target_categories: list[str] = field(
         default_factory=lambda: ['General', 'Character', 'Copyright']
     )
+    group_mode: str = "off"        # "off" / "expand" / "diverse"
+    max_per_group: int = 2         # 仅 diverse 模式生效
 
 
 @dataclass

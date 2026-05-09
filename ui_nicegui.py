@@ -74,7 +74,16 @@ OPTIONAL_COLS = {
 
 # localStorage key 与配置版本，版本变更时自动丢弃旧配置
 _CONFIG_LS_KEY = 'danbooru_search_config'
-_CONFIG_VERSION = 4
+_CONFIG_VERSION = 5
+
+# 搜索模式预设
+_SEARCH_MODE_PRESETS: dict[str, dict] = {
+    '精确查词': {'top_k': 20, 'limit': 10, 'popularity_weight': 0.15, 'use_segmentation': False, 'group_mode': 'off', 'max_per_group': 2},
+    '概念扩展': {'top_k': 80, 'limit': 80, 'popularity_weight': 0.15, 'use_segmentation': True,  'group_mode': 'expand', 'max_per_group': 2},
+    '描述查词': {'top_k': 20, 'limit': 20, 'popularity_weight': 0.15, 'use_segmentation': False, 'group_mode': 'off', 'max_per_group': 2},
+    '完整场景': {'top_k': 5,  'limit': 80, 'popularity_weight': 0.15, 'use_segmentation': True,  'group_mode': 'diverse', 'max_per_group': 2},
+}
+_SEARCH_MODE_OPTIONS = ['自定义'] + list(_SEARCH_MODE_PRESETS.keys())
 
 
 
@@ -133,6 +142,7 @@ class DanbooruSearchUI:
 
         self.result_table = None           # 左栏表格
         self.related_list_container = None  # 右栏关联推荐列表
+        self.group_expansion_container = None  # 右栏 Group 同类扩展
         self.results_section = None        # 整个结果区域（搜索前隐藏）
         self.selection_count_label = None
         self.selected_display = None       # 已废弃 textarea，保留兼容
@@ -152,6 +162,10 @@ class DanbooruSearchUI:
         self.input_weight = None
         self.input_nsfw = None
         self.input_segment = None
+        self.input_search_mode = None
+        self.input_group_mode = None
+        self.input_max_per_group = None
+        self._applying_preset = False
         self.search_input = None
         self.keywords_container = None
         self.spinner = None
@@ -252,6 +266,9 @@ class DanbooruSearchUI:
             'search_query': self.search_input.value if self.search_input else '',
             'notice_expanded': bool(self.notice_expansion.value) if self.notice_expansion else True,
             'mcp_notice_dismissed': not bool(self.mcp_notice.visible) if self.mcp_notice else False,
+            'search_mode': self.input_search_mode.value if self.input_search_mode else '自定义',
+            'group_mode': self.input_group_mode.value if self.input_group_mode else 'off',
+            'max_per_group': int(self.input_max_per_group.value) if self.input_max_per_group else 2,
         }
         js = _json.dumps(cfg, ensure_ascii=False)
         ui.run_javascript(f"localStorage.setItem('{_CONFIG_LS_KEY}', {_json.dumps(js)});")
@@ -281,6 +298,10 @@ class DanbooruSearchUI:
             ui.run_javascript(f"localStorage.removeItem('{_CONFIG_LS_KEY}');")
             return
 
+        # 恢复搜索模式（会触发预设填充，但 _applying_preset 防止联动覆盖）
+        if self.input_search_mode and 'search_mode' in cfg:
+            self.input_search_mode.set_value(cfg['search_mode'])
+
         if self.input_top_k and 'top_k' in cfg:
             self.input_top_k.set_value(cfg['top_k'])
         if self.input_limit and 'limit' in cfg:
@@ -289,6 +310,10 @@ class DanbooruSearchUI:
             self.input_weight.set_value(cfg['popularity_weight'])
         if self.input_segment and 'use_segmentation' in cfg:
             self.input_segment.set_value(cfg['use_segmentation'])
+        if self.input_group_mode and 'group_mode' in cfg:
+            self.input_group_mode.set_value(cfg['group_mode'])
+        if self.input_max_per_group and 'max_per_group' in cfg:
+            self.input_max_per_group.set_value(cfg['max_per_group'])
 
         # NSFW：仅在平台允许时恢复
         if nsfw_allowed() and self.input_nsfw and 'show_nsfw' in cfg:
@@ -448,10 +473,10 @@ class DanbooruSearchUI:
             if not DanbooruTagger.is_ready():
                 asyncio.ensure_future(self._hide_banner_when_ready())
 
-            # ── 1. MCP 上线通知 ──
-            self._build_mcp_notice()
+            # ── 0. 公告栏（同类标签 + MCP）──
+            self._build_group_notice()
 
-            # ── 2. 注意事项 ──
+            # ── 1. 注意事项 ──
             self._build_notice()
 
             # ── 2. 搜索卡片 ──
@@ -478,31 +503,34 @@ class DanbooruSearchUI:
 
     # ── MCP 上线通知 ──────────────────────────────────────────────────────
 
-    def _build_mcp_notice(self):
+    def _build_group_notice(self):
         self.mcp_notice = ui.card().classes(
             'w-full bg-green-50 border-l-4 border-green-500 p-0 overflow-hidden'
         )
         with self.mcp_notice:
-            with ui.column().classes('px-4 py-3 w-full gap-1'):
+            with ui.column().classes('px-4 py-3 w-full gap-2'):
                 with ui.row().classes('items-center justify-between w-full'):
-                    ui.label('🎉 MCP 服务正式上线！').classes('text-base font-bold text-green-800')
+                    ui.label('🧪 新功能：同类标签扩展（beta）').classes('text-sm font-bold text-green-800')
                     ui.button(icon='close').props('flat dense round color=grey-6') \
                         .on_click(self._dismiss_mcp_notice)
                 ui.html(
-                    '本站现已支持通过 MCP 协议接入 AI Agent（如 Claude Desktop）。'
-                    '如需体验<b>托管版</b>（免配置、开箱即用），请访问 '
+                    '勾选标签后，右侧面板底部会出现<b>同类标签</b>区域，'
+                    '展示已选标签所属分组中的其他标签。<b>点击色块</b>即可选中/取消，'
+                    '选中的标签会加入已选列表，可直接复制为 Prompt。'
+                ).classes('text-xs text-green-900')
+                ui.separator().classes('my-1')
+                ui.html(
+                    'MCP 服务已上线 — 支持通过 MCP 协议接入 AI Agent（如 Claude Desktop）。'
+                    '托管版体验 → '
                     '<a href="https://huggingface.co/spaces/SAkizuki/WenQiuYue" '
                     'target="_blank" rel="noopener noreferrer" '
                     'class="text-green-700 font-bold underline">问秋月 Space</a>，'
-                    '进入后点击「搜标签」即可调用。'
-                    '<span class="text-gray-500 ml-1">'
-                    'API 额度有限（约 30 元），用完即止，仅供体验。'
-                    '</span>'
-                    '&nbsp;&nbsp;'
+                    '<span class="text-gray-500 ml-1">API 额度有限，仅供体验。</span>'
+                    '&nbsp;'
                     '<a href="https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline#mcp-接口" '
                     'target="_blank" rel="noopener noreferrer" '
-                    'class="text-green-700 underline">查看接入文档 →</a>'
-                ).classes('text-sm text-green-900')
+                    'class="text-green-700 underline">接入文档 →</a>'
+                ).classes('text-xs text-green-900')
 
     def _dismiss_mcp_notice(self):
         if self.mcp_notice:
@@ -562,20 +590,32 @@ class DanbooruSearchUI:
 
             with ui.row().classes('w-full gap-6 items-center mt-3 flex-wrap'):
                 with ui.row().classes('items-center gap-2'):
+                    ui.label('搜索模式 (beta)').classes('text-sm text-gray-600')
+                    self.input_search_mode = ui.select(
+                        _SEARCH_MODE_OPTIONS, value='自定义',
+                    ).classes('w-28').props('outlined dense')
+                    self.input_search_mode.on('update:model-value', self._on_search_mode_change)
+                    with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                        ui.label('选择模式自动填充对应参数；手动修改参数后自动变为「自定义」').style('font-size:14px;')
+
+                with ui.row().classes('items-center gap-2'):
                     ui.label('Top K (语义相关)').classes('text-sm text-gray-600')
                     self.input_top_k = ui.number(value=10, min=1, max=200).classes('w-20') \
                         .props('outlined dense')
+                    self.input_top_k.on('update:model-value', self._on_param_changed)
 
                 with ui.row().classes('items-center gap-2'):
                     ui.label('结果上限').classes('text-sm text-gray-600')
                     self.input_limit = ui.number(value=80, min=10, max=500).classes('w-20') \
                         .props('outlined dense')
+                    self.input_limit.on('update:model-value', self._on_param_changed)
 
                 with ui.row().classes('items-center gap-2'):
                     ui.label('热度权重').classes('text-sm text-gray-600')
                     self.input_weight = ui.slider(min=0.0, max=1.0, value=0.15, step=0.05).classes('w-32')
                     ui.label().bind_text_from(self.input_weight, 'value', lambda v: f"{v:.2f}") \
                         .classes('text-sm font-mono text-gray-700 w-8')
+                    self.input_weight.on('update:model-value', self._on_param_changed)
 
                 with ui.switch('显示 NSFW(成人) 内容', value=False).props('color=red') as _nsfw_sw:
                     if not nsfw_allowed():
@@ -591,6 +631,7 @@ class DanbooruSearchUI:
                     with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
                         ui.label('关闭后系统将只匹配完整句子，适用于精准搜索整句。').style('font-size:14px;')
                 self.input_segment = _seg_sw
+                self.input_segment.on('update:model-value', self._on_param_changed)
 
             with ui.expansion('高级选项', icon='tune').classes('w-full mt-2'):
                 with ui.column().classes('w-full p-3 gap-4'):
@@ -631,6 +672,21 @@ class DanbooruSearchUI:
                             self.sw_semantic.on('update:model-value', self._update_table_columns)
                             self.sw_layer.on('update:model-value', self._update_table_columns)
                             self.sw_source.on('update:model-value', self._update_table_columns)
+
+                        with ui.column().classes('gap-2'):
+                            ui.label('标签分组模式 (beta)').classes('font-bold text-sm text-gray-700')
+                            self.input_group_mode = ui.select(
+                                ['off', 'expand', 'diverse'], value='off',
+                            ).classes('w-40').props('outlined dense')
+                            with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                                ui.label('off=关闭 | expand=同类召回增强 | diverse=多样性约束').style('font-size:14px;')
+                            self.input_group_mode.on('update:model-value', self._on_param_changed)
+
+                            self.input_max_per_group = ui.number(
+                                value=2, min=1, max=10,
+                            ).classes('w-20').props('outlined dense')
+                            ui.label('每组最大标签数（diverse 模式）').classes('text-xs text-gray-500')
+                            self.input_max_per_group.on('update:model-value', self._on_param_changed)
 
     # ── 已选标签栏 ────────────────────────────────────────────────────────
 
@@ -797,6 +853,11 @@ class DanbooruSearchUI:
             self.selection_count_label.text = '0'
         show_nsfw_val = self.input_nsfw.value
         self._refresh_related([], show_nsfw_val)
+        # 清空 Group 同类扩展
+        if self.group_expansion_container is not None:
+            self.group_expansion_container.clear()
+            with self.group_expansion_container:
+                ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
         self._save_staged_tags()
         ui.notify('已清空所有已选标签', type='warning')
 
@@ -901,6 +962,17 @@ class DanbooruSearchUI:
                 with self.related_list_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
+                # ── Group 同类扩展（折叠区域）──
+                ui.separator().classes('my-2')
+                with ui.row().classes('items-center gap-2 mb-1 w-full'):
+                    ui.label('同类标签 (beta)').classes('font-bold text-sm text-gray-600')
+                    with ui.icon('info_outline', size='xs', color='grey').classes('cursor-help'):
+                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                            ui.label('基于标签分组数据，展示已选标签所属分组中的其他标签。点击展开查看。').style('font-size:14px;')
+                self.group_expansion_container = ui.column().classes('w-full gap-0')
+                with self.group_expansion_container:
+                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
+
     # ══════════════════════════════════════════════════════════════════════
     # 渲染关联推荐列表
     # ══════════════════════════════════════════════════════════════════════
@@ -934,7 +1006,9 @@ class DanbooruSearchUI:
                 except Exception:
                     pass
 
-                sources_str = '、'.join(r.sources) if r.sources else '—'
+                sources_str = '、'.join(
+                    s.replace('tag_group:', '') for s in r.sources
+                ) if r.sources else '—'
                 CAT_LABEL = {'General': '通用', 'Character': '角色', 'Copyright': '作品'}
                 cat_label = CAT_LABEL.get(r.category, '')
                 tooltip_html = ''
@@ -975,12 +1049,18 @@ class DanbooruSearchUI:
 
                     # 标签名（可点击跳转）+ 中文名
                     with ui.column().classes('flex-grow gap-0 min-w-0'):
-                        link = ui.link(
-                            tag,
-                            f'https://danbooru.donmai.us/wiki_pages/{tag}',
-                            new_tab=True
-                        ).classes('tag-link text-primary font-bold text-xs')
-                        link.on('click', self._mark_interaction)
+                        with ui.row().classes('items-center gap-1'):
+                            link = ui.link(
+                                tag,
+                                f'https://danbooru.donmai.us/wiki_pages/{tag}',
+                                new_tab=True
+                            ).classes('tag-link text-primary font-bold text-xs')
+                            link.on('click', self._mark_interaction)
+                            if r.sources and r.sources[0].startswith('tag_group:'):
+                                group_display = r.sources[0].replace('tag_group:', '')
+                                ui.label(group_display).classes(
+                                    'text-xs text-orange-500 font-bold bg-orange-50 px-1 rounded'
+                                )
 
                         if cn_first:
                             ui.label(cn_first).classes('text-xs text-gray-500 truncate')
@@ -1087,6 +1167,8 @@ class DanbooruSearchUI:
                 use_segmentation=self.input_segment.value if self.input_segment else True,
                 target_layers=target_layers_list,
                 target_categories=target_cats_list,
+                group_mode=self.input_group_mode.value if self.input_group_mode else 'off',
+                max_per_group=int(self.input_max_per_group.value) if self.input_max_per_group else 2,
             )
             response = await run.io_bound(tagger.search, request)
 
@@ -1264,6 +1346,8 @@ class DanbooruSearchUI:
     # ── 关联推荐 ──────────────────────────────────────────────────────────
 
     def _refresh_related(self, related: list, show_nsfw: bool):
+        if related is None:
+            related = []
         selected_now = set(self._get_selected_tags())
         old_related  = self.current_related
         new_tags  = {r.tag for r in related}
@@ -1285,7 +1369,93 @@ class DanbooruSearchUI:
                 show_nsfw,
             )
             self._refresh_related(related, show_nsfw)
+            # 异步加载 Group 同类扩展
+            if selected_tags:
+                group_data = await run.io_bound(
+                    tagger.get_group_candidates,
+                    selected_tags,
+                    show_nsfw,
+                )
+                self._render_group_expansion(group_data, selected_tags, show_nsfw)
         asyncio.ensure_future(_do())
+
+    def _render_group_expansion(self, group_data: list, selected_tags: list[str], show_nsfw: bool):
+        """渲染 Group 同类扩展区域。"""
+        if self.group_expansion_container is None:
+            return
+        self.group_expansion_container.clear()
+
+        if not group_data:
+            with self.group_expansion_container:
+                ui.label('已选标签无分组信息').classes('text-sm text-gray-400 italic p-2')
+            return
+
+        # 分类色表：(背景色, 选中后深色, 文字色)
+        CAT_STYLE = {
+            'General':   ('rgba(59,130,246,0.12)', 'rgba(59,130,246,0.30)', 'rgb(37,99,235)'),
+            'Character': ('rgba(34,197,94,0.12)',  'rgba(34,197,94,0.30)',  'rgb(22,163,74)'),
+            'Copyright': ('rgba(236,72,153,0.12)', 'rgba(236,72,153,0.30)', 'rgb(219,39,119)'),
+        }
+        default_style = ('rgba(107,114,128,0.12)', 'rgba(107,114,128,0.30)', 'rgb(55,65,81)')
+
+        with self.group_expansion_container:
+            for group_info in group_data:
+                group_name = group_info['group']
+                tags = group_info['tags']
+                display_name = group_name.replace('tag_group:', '')
+
+                with ui.expansion(
+                    f'{display_name} ({len(tags)} 个标签)',
+                    icon='label',
+                ).classes('w-full').props('dense'):
+                    with ui.element('div').classes('w-full grid grid-cols-2 gap-1 p-1').style('max-height: 600px; overflow-y: auto;'):
+                        for t in tags:
+                            tag = t['tag']
+                            cn_first = t['cn_name'].split(',')[0].strip() if t['cn_name'] else ''
+                            cat = t['category']
+                            wiki_text = str(t.get('wiki', ''))
+                            bg_normal, bg_selected, text_color = CAT_STYLE.get(cat, default_style)
+
+                            # 色块容器
+                            chip = ui.element('div').classes(
+                                'rounded cursor-pointer transition-all duration-150 px-2 py-1.5'
+                            ).style(f'background-color: {bg_normal}; color: {text_color};')
+
+                            with chip:
+                                with ui.row().classes('items-center gap-1 w-full'):
+                                    ui.label(tag).classes('text-xs font-bold truncate flex-grow')
+                                    count = t['post_count']
+                                    if count > 0:
+                                        if count >= 10000:
+                                            count_str = f'{count/1000:.0f}k'
+                                        elif count >= 1000:
+                                            count_str = f'{count/1000:.1f}k'
+                                        else:
+                                            count_str = str(count)
+                                        ui.label(count_str).classes('text-xs opacity-60')
+                                if cn_first:
+                                    ui.label(cn_first).classes('text-xs opacity-70 truncate block')
+
+                            # Wiki tooltip
+                            if wiki_text:
+                                with chip:
+                                    with ui.tooltip().props('content-class="bg-black text-white shadow-4" max-width="400px"'):
+                                        ui.html(wiki_text).style('font-size:13px;line-height:1.4;max-width:380px;')
+
+                            # 点击选中/取消
+                            is_selected = [False]
+
+                            def _toggle(e, _chip=chip, _tag=tag, _bg_n=bg_normal, _bg_s=bg_selected):
+                                if is_selected[0]:
+                                    _chip.style(f'background-color: {_bg_n};')
+                                    self.chip_extra_selected.discard(_tag)
+                                else:
+                                    _chip.style(f'background-color: {_bg_s};')
+                                    self.chip_extra_selected.add(_tag)
+                                is_selected[0] = not is_selected[0]
+                                self._render_selected_chips()
+
+                            chip.on('click', _toggle)
 
     # ── 表格列动态更新 ──────────────────────────────────────────────────
 
@@ -1298,6 +1468,35 @@ class DanbooruSearchUI:
         if self.sw_source and self.sw_source.value:
             cols.append(OPTIONAL_COLS['source'])
         self.result_table.columns = cols
+
+    # ── 搜索模式 / 参数联动 ──────────────────────────────────────────────
+
+    def _on_search_mode_change(self, _e=None):
+        mode = self.input_search_mode.value if self.input_search_mode else None
+        if not mode or mode == '自定义' or mode not in _SEARCH_MODE_PRESETS:
+            return
+        preset = _SEARCH_MODE_PRESETS[mode]
+        self._applying_preset = True
+        try:
+            if self.input_top_k:
+                self.input_top_k.set_value(preset['top_k'])
+            if self.input_limit:
+                self.input_limit.set_value(preset['limit'])
+            if self.input_weight:
+                self.input_weight.set_value(preset['popularity_weight'])
+            if self.input_segment:
+                self.input_segment.set_value(preset['use_segmentation'])
+            if self.input_group_mode:
+                self.input_group_mode.set_value(preset['group_mode'])
+            if self.input_max_per_group:
+                self.input_max_per_group.set_value(preset['max_per_group'])
+        finally:
+            self._applying_preset = False
+
+    def _on_param_changed(self, _e=None):
+        if not self._applying_preset and self.input_search_mode:
+            if self.input_search_mode.value != '自定义':
+                self.input_search_mode.set_value('自定义')
 
     # ── NSFW 切换 ─────────────────────────────────────────────────────────
 
@@ -1443,17 +1642,17 @@ if __name__ in {'__main__', '__mp_main__'}:
     @app.get('/robots.txt')
     def robots_txt():
         content = (
-            "User-agent: *\n"
-            "Allow: /$\n"
-            "Disallow: /api/\n"
-            "Disallow: /_nicegui/\n"
-            "Disallow: /socket.io/\n"
+            'User-agent: *\n'
+            'Allow: /$\n'
+            'Disallow: /api/\n'
+            'Disallow: /_nicegui/\n'
+            'Disallow: /socket.io/\n'
         )
         return PlainTextResponse(content)
 
     @app.head('/')
     async def head_root():
-        return PlainTextResponse("")
+        return PlainTextResponse('')
 
     ui.run(
         host=host,

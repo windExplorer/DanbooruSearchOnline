@@ -163,6 +163,7 @@ class DanbooruTagger:
         csv_file:   str = 'origin_database/tags_enhanced.csv',
         cache_dir:  str = 'tags_embedding',
         cooc_file:  str = 'origin_database/cooccurrence_clean.csv',
+        group_file: str = 'origin_database/tag_groups.json',
     ):
         # 模型路径：优先使用显式传入，否则交由 platform_utils 解析
         self.model_path = model_path or resolve_model_path()
@@ -171,6 +172,7 @@ class DanbooruTagger:
         self.device    = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.paths     = _CachePaths(cache_dir)
         self.cooc_file = cooc_file
+        self.group_file = group_file
 
         self.model:         Optional[SentenceTransformer]         = None
         self.df:            Optional[pd.DataFrame]                = None
@@ -181,6 +183,8 @@ class DanbooruTagger:
         self.max_log_count: float                                 = 15.0
         self.cooc: dict[str, list[tuple[str, int]]]               = {}
         self._name_to_idx: dict[str, int]                         = {}
+        self._tag_to_groups: dict[str, set[str]]                  = {}
+        self._group_to_tags_idx: dict[str, np.ndarray]            = {}
         self.is_loaded:     bool                                  = False
 
         # 预提取的列数组，避免热点路径上反复执行 df.iloc[idx]
@@ -238,6 +242,7 @@ class DanbooruTagger:
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
         self._rebuild_arrays_from_df()
         self._normalize_embeddings()
+        self._load_groups()
         self.is_loaded = True
         print(f'[Engine] 初始化完成，耗时 {time.time() - t0:.2f}s')
 
@@ -294,6 +299,7 @@ class DanbooruTagger:
 
         self.csv_path  = pull('origin_database/tags_enhanced.csv')
         self.cooc_file = pull('origin_database/cooccurrence_clean.parquet')
+        self.group_file = pull('origin_database/tag_groups.json')
 
         meta_path = pull('tags_embedding/tags_metadata.parquet')
         emb_path  = pull('tags_embedding/danbooru_multiview_embeddings.safetensors')
@@ -343,6 +349,8 @@ class DanbooruTagger:
             request.use_segmentation,
             tuple(sorted(request.target_layers)),
             tuple(sorted(request.target_categories)),
+            request.group_mode,
+            request.max_per_group,
         )
         cached = self._search_cache.get(cache_key)
         if cached is not None:
@@ -450,6 +458,10 @@ class DanbooruTagger:
             # coherence=0 时最多扣 alpha=15%；coherence=1 时不扣分
             r.final_score = round(r.final_score * (1.0 - alpha + alpha * max_co), 4)
 
+        # Group expand 处理（在 guaranteed_tags 之前，因为会改分数）
+        if request.group_mode == "expand" and self._tag_to_groups:
+            self._apply_group_expand(final)
+
         # 收集每个查询源的 top-1 结果（高于阈值）
         guaranteed_tags: set[str] = set()
         for source_word in queries:
@@ -464,11 +476,37 @@ class DanbooruTagger:
         # 对所有候选进行排序，然后在保留保证结果的同时截断至限制数量
         sorted_results = sorted(final.values(), key=lambda r: r.final_score, reverse=True)
         valid: list[TagResult] = []
-        for r in sorted_results:
-            if r.final_score <= 0.45:
-                continue
-            if len(valid) < request.limit or r.tag in guaranteed_tags:
-                valid.append(r)
+
+        if request.group_mode == "diverse" and self._tag_to_groups:
+            # diverse 模式：每个 group 最多保留 max_per_group 个标签
+            group_counter: dict[str, int] = {}
+            max_per = request.max_per_group
+            for r in sorted_results:
+                if r.final_score <= 0.45:
+                    continue
+                if r.tag in guaranteed_tags:
+                    # guaranteed_tags 豁免 group 上限
+                    valid.append(r)
+                    continue
+                groups = self._tag_to_groups.get(r.tag)
+                if not groups:
+                    # 无 group 信息，不受限制
+                    if len(valid) < request.limit:
+                        valid.append(r)
+                    continue
+                # 检查是否有任一 group 达上限
+                if any(group_counter.get(g, 0) >= max_per for g in groups):
+                    continue
+                if len(valid) < request.limit:
+                    valid.append(r)
+                    for g in groups:
+                        group_counter[g] = group_counter.get(g, 0) + 1
+        else:
+            for r in sorted_results:
+                if r.final_score <= 0.45:
+                    continue
+                if len(valid) < request.limit or r.tag in guaranteed_tags:
+                    valid.append(r)
 
         tags_all = ', '.join(r.tag for r in valid)
         tags_sfw = ', '.join(r.tag for r in valid if r.nsfw != '1')
@@ -478,6 +516,46 @@ class DanbooruTagger:
         )
         self._search_cache.put(cache_key, response)
         return response
+
+    def _apply_group_expand(self, final: dict[str, TagResult]) -> None:
+        """expand 模式：提升同 group 标签的分数。"""
+        BETA = 0.2
+        TOP_N = 20
+
+        sorted_items = sorted(final.values(), key=lambda r: r.final_score, reverse=True)
+        top_n = min(TOP_N, len(sorted_items))
+        anchor_results = sorted_items[:top_n]
+
+        # 收集锚点结果所属的所有 group
+        active_groups: set[str] = set()
+        for r in anchor_results:
+            groups = self._tag_to_groups.get(r.tag)
+            if groups:
+                active_groups.update(groups)
+
+        if not active_groups:
+            return
+
+        # 预计算每个 group 的锚点最大分
+        group_max_score: dict[str, float] = {}
+        for g in active_groups:
+            group_max_score[g] = max(
+                (r.final_score for r in anchor_results
+                 if g in self._tag_to_groups.get(r.tag, set())),
+                default=0.0,
+            )
+
+        # 对所有候选应用 boost
+        for r in final.values():
+            groups = self._tag_to_groups.get(r.tag)
+            if not groups:
+                continue
+            overlap = groups & active_groups
+            if not overlap:
+                continue
+            best_group_score = max(group_max_score[g] for g in overlap)
+            boost = 1.0 + BETA * best_group_score
+            r.final_score = round(r.final_score * boost, 4)
 
     # ── 全量构建 ──────────────────────────────────────────────────────────
 
@@ -553,6 +631,7 @@ class DanbooruTagger:
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
         self._rebuild_arrays_from_df()
+        self._load_groups()
         self._normalize_embeddings()
         self._save_cache()
         print(f'[Engine] 增量更新完成，耗时 {time.time() - t0:.2f}s（共 {len(self.df)} 条）')
@@ -812,25 +891,24 @@ class DanbooruTagger:
         max_score = max(npmi_scores.values())
 
         sorted_candidates = sorted(npmi_scores.items(), key=lambda x: x[1], reverse=True)
-        results = []
+
+        # ── 构建 NPMI 结果 ─────────────────────────────────────────────
+        results: list = []
 
         for tag_name, raw_score in sorted_candidates:
             if len(results) >= limit:
                 break
-
             idx = name_to_idx[tag_name]
             nsfw = self._arr_nsfw[idx]
             if nsfw == '1' and not show_nsfw:
                 continue
-
             cat = CAT_MAP.get(self._arr_category[idx], 'Other')
-
             results.append(RelatedTag(
                 tag=tag_name,
                 cn_name=str(self._arr_cn_name[idx]),
                 category=cat,
                 nsfw=nsfw,
-                cooc_count=total_cooc[tag_name],
+                cooc_count=total_cooc.get(tag_name, 0),
                 cooc_score=round(raw_score / max_score, 4),
                 sources=tag_sources.get(tag_name, []),
                 post_count=int(self._arr_post_count[idx]),
@@ -838,6 +916,61 @@ class DanbooruTagger:
             ))
 
         self._related_cache.put(related_key, results)
+        return results
+
+    def get_group_candidates(
+            self,
+            selected_tags: list[str],
+            show_nsfw: bool = True,
+    ) -> list[dict]:
+        """根据已选标签，返回候选 Group 及其成员标签。"""
+        if not self._tag_to_groups or not selected_tags:
+            return []
+
+        group_hit_count: dict[str, int] = {}
+        for tag_name in selected_tags:
+            groups = self._tag_to_groups.get(tag_name)
+            if groups:
+                for g in groups:
+                    group_hit_count[g] = group_hit_count.get(g, 0) + 1
+
+        if not group_hit_count:
+            return []
+
+        selected_set = set(selected_tags)
+        sorted_groups = sorted(group_hit_count.items(), key=lambda x: -x[1])
+
+        results = []
+        for group_name, hit_count in sorted_groups:
+            member_idxs = self._group_to_tags_idx.get(group_name)
+            if member_idxs is None:
+                continue
+
+            tags = []
+            for idx in member_idxs:
+                tag_name = str(self._arr_name[idx])
+                if tag_name in selected_set:
+                    continue
+                nsfw = self._arr_nsfw[idx]
+                if nsfw == '1' and not show_nsfw:
+                    continue
+                cat = CAT_MAP.get(self._arr_category[idx], 'Other')
+                tags.append({
+                    'tag': tag_name,
+                    'cn_name': str(self._arr_cn_name[idx]),
+                    'category': cat,
+                    'nsfw': nsfw,
+                    'post_count': int(self._arr_post_count[idx]),
+                    'wiki': str(self._arr_wiki[idx]) if self._arr_wiki is not None else '',
+                })
+
+            tags.sort(key=lambda x: -x['post_count'])
+            results.append({
+                'group': group_name,
+                'hit_count': hit_count,
+                'tags': tags,
+            })
+
         return results
 
     def _load_cooc(self) -> None:
@@ -895,3 +1028,34 @@ class DanbooruTagger:
             )
         except Exception as e:
             print(f'[Engine] 共现表加载失败: {e}')
+
+    def _load_groups(self) -> None:
+        """加载 Tag Group 数据，构建 tag→group 和 group→idx 索引。"""
+        if not Path(self.group_file).is_file():
+            print('[Engine] 未找到 Tag Group 数据，group 功能不可用。')
+            return
+
+        with open(self.group_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        raw_t2g = data.get('tag_to_groups', {})
+        name_to_idx = self._name_to_idx
+
+        self._tag_to_groups = {}
+        group_members: dict[str, list[int]] = {}
+
+        for tag_name, groups in raw_t2g.items():
+            if tag_name not in name_to_idx:
+                continue
+            group_set = set(groups)
+            self._tag_to_groups[tag_name] = group_set
+            idx = name_to_idx[tag_name]
+            for g in group_set:
+                group_members.setdefault(g, []).append(idx)
+
+        self._group_to_tags_idx = {
+            g: np.array(idxs, dtype=np.int64) for g, idxs in group_members.items()
+        }
+
+        print(f'[Engine] Tag Group loaded, {len(self._tag_to_groups)} tags, '
+              f'{len(self._group_to_tags_idx)} groups')
