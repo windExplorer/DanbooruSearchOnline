@@ -142,7 +142,7 @@ class DanbooruSearchUI:
 
         self.result_table = None           # 左栏表格
         self.related_list_container = None  # 右栏关联推荐列表
-        self.group_expansion_container = None  # 右栏 Group 同类扩展
+        self.group_expansion_container = None  # 左栏 Group 同类扩展（表格下方）
         self.results_section = None        # 整个结果区域（搜索前隐藏）
         self.selection_count_label = None
         self.selected_display = None       # 已废弃 textarea，保留兼容
@@ -186,6 +186,8 @@ class DanbooruSearchUI:
 
         # 关联推荐的 checkbox 引用
         self._related_checkboxes: dict[str, ui.checkbox] = {}
+        # 同类标签的 checkbox 引用
+        self._group_checkboxes: dict[str, ui.checkbox] = {}
 
         # 高级选项中各层/类型的 checkbox 引用，用于 restore 时同步控件状态
         self._layer_checkboxes: dict[str, ui.checkbox] = {}
@@ -514,8 +516,8 @@ class DanbooruSearchUI:
                     ui.button(icon='close').props('flat dense round color=grey-6') \
                         .on_click(self._dismiss_mcp_notice)
                 ui.html(
-                    '勾选标签后，右侧面板底部会出现<b>同类标签</b>区域，'
-                    '展示已选标签所属分组中的其他标签。<b>点击色块</b>即可选中/取消，'
+                    '勾选标签后，搜索结果下方会出现<b>同类标签</b>区域，'
+                    '展示已选标签所属分组中的其他标签。<b>勾选复选框</b>即可加入已选，'
                     '选中的标签会加入已选列表，可直接复制为 Prompt。'
                 ).classes('text-xs text-green-900')
                 ui.separator().classes('my-1')
@@ -943,6 +945,17 @@ class DanbooruSearchUI:
                     </q-tr>
                 ''')
 
+                # ── Group 同类扩展（左栏，表格下方）──
+                ui.separator().classes('my-2')
+                with ui.row().classes('items-center gap-2 mb-1 w-full'):
+                    ui.label('同类标签 (beta)').classes('font-bold text-sm text-gray-600')
+                    with ui.icon('info_outline', size='xs', color='grey').classes('cursor-help'):
+                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                            ui.label('基于标签分组数据，展示已选标签所属分组中的其他标签。勾选可加入已选。').style('font-size:14px;')
+                self.group_expansion_container = ui.column().classes('w-full gap-0')
+                with self.group_expansion_container:
+                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
+
             # ── 右栏：关联推荐 ──
             with ui.card().classes('col-right'):
                 with ui.row().classes('items-center justify-between w-full mb-2'):
@@ -960,17 +973,6 @@ class DanbooruSearchUI:
 
                 self.related_list_container = ui.column().classes('w-full gap-0')
                 with self.related_list_container:
-                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
-
-                # ── Group 同类扩展（折叠区域）──
-                ui.separator().classes('my-2')
-                with ui.row().classes('items-center gap-2 mb-1 w-full'):
-                    ui.label('同类标签 (beta)').classes('font-bold text-sm text-gray-600')
-                    with ui.icon('info_outline', size='xs', color='grey').classes('cursor-help'):
-                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
-                            ui.label('基于标签分组数据，展示已选标签所属分组中的其他标签。点击展开查看。').style('font-size:14px;')
-                self.group_expansion_container = ui.column().classes('w-full gap-0')
-                with self.group_expansion_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
     # ══════════════════════════════════════════════════════════════════════
@@ -1347,6 +1349,23 @@ class DanbooruSearchUI:
                 self._set_selected_tags(current, skip_refresh=True)
                 ui.notify(f'已移除 {tag}', type='warning', timeout=1500)
 
+    def _on_group_checkbox_change(self, tag: str, checked: bool):
+        """同类标签复选框变化回调。"""
+        self._mark_interaction()
+        current = self._get_selected_tags()
+        if checked:
+            if tag not in current:
+                current.append(tag)
+                self.tag_weights.setdefault(tag, 1.0)
+                self._set_selected_tags(current, skip_refresh=True)
+                ui.notify(f'已添加 {tag}', type='positive', timeout=1500)
+        else:
+            if tag in current:
+                current.remove(tag)
+                self.tag_weights.pop(tag, None)
+                self._set_selected_tags(current, skip_refresh=True)
+                ui.notify(f'已移除 {tag}', type='warning', timeout=1500)
+
     def _manual_refresh_related(self):
         """手动触发关联推荐列表的刷新"""
         self._mark_interaction()
@@ -1402,19 +1421,22 @@ class DanbooruSearchUI:
         if self.group_expansion_container is None:
             return
         self.group_expansion_container.clear()
+        self._group_checkboxes.clear()
 
         if not group_data:
             with self.group_expansion_container:
                 ui.label('已选标签无分组信息').classes('text-sm text-gray-400 italic p-2')
             return
 
-        # 分类色表：(背景色, 选中后深色, 文字色)
-        CAT_STYLE = {
-            'General':   ('rgba(59,130,246,0.12)', 'rgba(59,130,246,0.30)', 'rgb(37,99,235)'),
-            'Character': ('rgba(34,197,94,0.12)',  'rgba(34,197,94,0.30)',  'rgb(22,163,74)'),
-            'Copyright': ('rgba(236,72,153,0.12)', 'rgba(236,72,153,0.30)', 'rgb(219,39,119)'),
+        # 行背景色按分类区分（与关联推荐一致）
+        CAT_BG = {
+            'General':   'background-color: rgba(59,130,246,0.06);',
+            'Character': 'background-color: rgba(34,197,94,0.06);',
+            'Copyright': 'background-color: rgba(236,72,153,0.06);',
         }
-        default_style = ('rgba(107,114,128,0.12)', 'rgba(107,114,128,0.30)', 'rgb(55,65,81)')
+        CAT_LABEL = {'General': '通用', 'Character': '角色', 'Copyright': '作品'}
+
+        selected_now = set(self._get_selected_tags())
 
         with self.group_expansion_container:
             for group_info in group_data:
@@ -1426,62 +1448,59 @@ class DanbooruSearchUI:
                     f'{group_cn} ({len(tags)} 个标签)',
                     icon='label',
                 ).classes('w-full').props('dense'):
-                    with ui.element('div').classes('w-full grid grid-cols-2 gap-1 p-1').style('max-height: 600px; overflow-y: auto;'):
+                    with ui.element('div').classes('w-full grid grid-cols-3 gap-1 p-1').style('max-height: 600px; overflow-y: auto;'):
                         for t in tags:
                             tag = t['tag']
                             cn_first = t['cn_name'].split(',')[0].strip() if t['cn_name'] else ''
                             cat = t['category']
                             wiki_text = str(t.get('wiki', ''))
-                            bg_normal, bg_selected, text_color = CAT_STYLE.get(cat, default_style)
-                            nsfw_blocked = (t.get('nsfw') == '1') and not show_nsfw
+                            row_bg = CAT_BG.get(cat, '')
+                            is_selected = tag in selected_now
 
-                            # NSFW 时移除 pointer、使用模糊样式
-                            chip_classes = 'rounded transition-all duration-150 px-2 py-1.5'
-                            if nsfw_blocked:
-                                chip_classes += ' nsfw-blur-cell'
-                            else:
-                                chip_classes += ' cursor-pointer'
-
-                            chip = ui.element('div').classes(chip_classes).style(
-                                f'background-color: {bg_normal}; color: {text_color};'
+                            cat_label = CAT_LABEL.get(cat, '')
+                            tooltip_html = ''
+                            if wiki_text:
+                                prefix = f'<span style="opacity:0.7;margin-right:4px;">[{cat_label}]</span> ' if cat_label else ''
+                                tooltip_html += f'<div style="margin-bottom:6px;">{prefix}{wiki_text}</div>'
+                            tooltip_html += (
+                                f'<div style="opacity:0.85;">{cn_first}</div>'
+                                if cn_first else ''
                             )
 
-                            with chip:
-                                with ui.row().classes('items-center gap-1 w-full'):
-                                    ui.label(tag).classes('text-xs font-bold truncate flex-grow')
-                                    count = t['post_count']
-                                    if count > 0:
-                                        if count >= 10000:
-                                            count_str = f'{count/1000:.0f}k'
-                                        elif count >= 1000:
-                                            count_str = f'{count/1000:.1f}k'
-                                        else:
-                                            count_str = str(count)
-                                        ui.label(count_str).classes('text-xs opacity-60')
-                                if cn_first:
-                                    ui.label(cn_first).classes('text-xs opacity-70 truncate block')
+                            with ui.row().classes(
+                                'w-full items-center gap-1.5 px-2 py-1.5 rounded related-item'
+                            ).style(row_bg):
+                                if tooltip_html:
+                                    with ui.tooltip().props('content-class="bg-black text-white shadow-4" max-width="500px"'):
+                                        ui.html(tooltip_html).style('font-size:14px;line-height:1.5;max-width:480px;')
 
-                            # Wiki tooltip（NSFW 不显示）
-                            if wiki_text and not nsfw_blocked:
-                                with chip:
-                                    with ui.tooltip().props('content-class="bg-black text-white shadow-4" max-width="400px"'):
-                                        ui.html(wiki_text).style('font-size:13px;line-height:1.4;max-width:380px;')
+                                # 复选框
+                                cb = ui.checkbox(
+                                    '', value=is_selected,
+                                    on_change=lambda e, t=tag: self._on_group_checkbox_change(t, e.value),
+                                ).props('dense')
+                                self._group_checkboxes[tag] = cb
 
-                            # 点击选中/取消（NSFW 不响应点击）
-                            if not nsfw_blocked:
-                                is_selected = [False]
+                                # 标签名 + 中文名（与关联推荐对齐方式一致）
+                                with ui.column().classes('flex-grow gap-0 min-w-0 overflow-hidden'):
+                                    link = ui.link(
+                                        tag,
+                                        f'https://danbooru.donmai.us/wiki_pages/{tag}',
+                                        new_tab=True,
+                                    ).classes('tag-link text-primary font-bold text-xs truncate')
+                                    if cn_first:
+                                        ui.label(cn_first).classes('text-xs text-gray-500 truncate')
 
-                                def _toggle(e, _chip=chip, _tag=tag, _bg_n=bg_normal, _bg_s=bg_selected):
-                                    if is_selected[0]:
-                                        _chip.style(f'background-color: {_bg_n};')
-                                        self.chip_extra_selected.discard(_tag)
+                                # 热度
+                                count = t['post_count']
+                                if count > 0:
+                                    if count >= 10000:
+                                        count_str = f'{count/1000:.0f}k'
+                                    elif count >= 1000:
+                                        count_str = f'{count/1000:.1f}k'
                                     else:
-                                        _chip.style(f'background-color: {_bg_s};')
-                                        self.chip_extra_selected.add(_tag)
-                                    is_selected[0] = not is_selected[0]
-                                    self._render_selected_chips()
-
-                                chip.on('click', _toggle)
+                                        count_str = str(count)
+                                    ui.label(count_str).classes('text-sm font-bold text-grey-600 whitespace-nowrap')
 
     # ── 表格列动态更新 ──────────────────────────────────────────────────
 
