@@ -931,7 +931,7 @@ class DanbooruSearchUI:
                             </template>
                             <template v-else>{{ col.value }}</template>
                         </q-td>
-                        <q-tooltip v-if="props.row.wiki && !props.row._nsfw_blocked"
+                        <q-tooltip v-if="(props.row.wiki || props.row.cn_name) && !props.row._nsfw_blocked"
                             content-class="bg-black text-white shadow-4"
                             max-width="500px" :offset="[10,10]">
                             <div style="font-size:14px;line-height:1.5;">
@@ -940,6 +940,8 @@ class DanbooruSearchUI:
                                     props.row.category === 'Character' ? '[角色]' :
                                     props.row.category === 'Copyright' ? '[作品]' : ''
                                 }}</span>{{ props.row.wiki }}
+                                <div v-if="props.row.cn_name"
+                                     style="margin-top:6px;opacity:0.85;">{{ props.row.cn_name }}</div>
                             </div>
                         </q-tooltip>
                     </q-tr>
@@ -947,11 +949,14 @@ class DanbooruSearchUI:
 
                 # ── Group 同类扩展（左栏，表格下方）──
                 ui.separator().classes('my-2')
-                with ui.row().classes('items-center gap-2 mb-1 w-full'):
-                    ui.label('同类标签 (beta)').classes('font-bold text-sm text-gray-600')
-                    with ui.icon('info_outline', size='xs', color='grey').classes('cursor-help'):
-                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
-                            ui.label('基于标签分组数据，展示已选标签所属分组中的其他标签。勾选可加入已选。').style('font-size:14px;')
+                with ui.row().classes('items-center justify-between w-full mb-1'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('同类标签 (beta)').classes('font-bold text-sm text-gray-600')
+                        with ui.icon('info_outline', size='xs', color='grey').classes('cursor-help'):
+                            with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                                ui.label('基于标签分组数据，展示已选标签所属分组中的其他标签。勾选可加入已选。').style('font-size:14px;')
+                    ui.button('根据已选刷新', icon='refresh', on_click=self._manual_refresh_group) \
+                        .props('dense flat color=primary').classes('text-sm')
                 self.group_expansion_container = ui.column().classes('w-full gap-0')
                 with self.group_expansion_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
@@ -1015,7 +1020,7 @@ class DanbooruSearchUI:
                 cat_label = CAT_LABEL.get(r.category, '')
                 tooltip_html = ''
                 if wiki_text:
-                    prefix = f'<span style="opacity:0.7;margin-right:4px;">[{cat_label}] </span>' if cat_label else ''
+                    prefix = f'<span style="opacity:0.7;margin-right:4px;">[{cat_label}]</span>' if cat_label else ''
                     tooltip_html += f'<div style="margin-bottom:6px;">{prefix}{wiki_text}</div>'
                 tooltip_html += (
                     f'<div style="opacity:0.85;">'
@@ -1288,18 +1293,13 @@ class DanbooruSearchUI:
         self._render_selected_chips()
         # 显式刷新关联推荐和 Group 区域（不依赖 table.on('selection') 事件，
         # 因为在 chip 点击回调上下文中该事件可能不可靠）。
-        # 从关联推荐勾选时跳过，由用户手动点击「根据已选刷新」触发。
+        # 从关联推荐/同类标签勾选时跳过，由各自动态刷新或手动按钮触发。
         if not skip_refresh:
             show_nsfw_val = self.input_nsfw.value
-            if all_tags:
-                self._refresh_related_from_selection(all_tags, show_nsfw_val)
-            else:
+            self._refresh_related_from_selection(all_tags, show_nsfw_val)
+            self._refresh_group_from_selection(all_tags, show_nsfw_val)
+            if not all_tags:
                 self.chip_extra_selected.clear()
-                self._refresh_related([], show_nsfw_val)
-                if self.group_expansion_container is not None:
-                    self.group_expansion_container.clear()
-                    with self.group_expansion_container:
-                        ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
     def _update_selection_display(self, _e):
         if self.result_table is None:
@@ -1321,16 +1321,10 @@ class DanbooruSearchUI:
         self._render_selected_chips()
 
         show_nsfw_val = self.input_nsfw.value
-        if all_tags:
-            self._refresh_related_from_selection(all_tags, show_nsfw_val)
-        else:
+        self._refresh_related_from_selection(all_tags, show_nsfw_val)
+        self._refresh_group_from_selection(all_tags, show_nsfw_val)
+        if not all_tags:
             self.chip_extra_selected.clear()
-            self._refresh_related([], show_nsfw_val)
-            # 清空 Group 同类扩展（与 _clear_all_staged 保持一致）
-            if self.group_expansion_container is not None:
-                self.group_expansion_container.clear()
-                with self.group_expansion_container:
-                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
         self._save_staged_tags()
 
     def _on_related_checkbox_change(self, tag: str, checked: bool):
@@ -1365,6 +1359,9 @@ class DanbooruSearchUI:
                 self.tag_weights.pop(tag, None)
                 self._set_selected_tags(current, skip_refresh=True)
                 ui.notify(f'已移除 {tag}', type='warning', timeout=1500)
+        # 即刻刷新关联推荐
+        show_nsfw_val = self.input_nsfw.value
+        self._refresh_related_from_selection(current, show_nsfw_val)
 
     def _manual_refresh_related(self):
         """手动触发关联推荐列表的刷新"""
@@ -1379,6 +1376,22 @@ class DanbooruSearchUI:
             self.chip_extra_selected.clear()
             self._refresh_related([], show_nsfw_val)
             ui.notify('已清空关联推荐', type='info', timeout=1500)
+
+    def _manual_refresh_group(self):
+        """手动触发同类扩展区域的刷新"""
+        self._mark_interaction()
+        show_nsfw_val = self.input_nsfw.value
+        all_tags = self._get_selected_tags()
+
+        if all_tags:
+            self._refresh_group_from_selection(all_tags, show_nsfw_val)
+            ui.notify('已触发同类标签更新', type='info', timeout=1500)
+        else:
+            if self.group_expansion_container is not None:
+                self.group_expansion_container.clear()
+                with self.group_expansion_container:
+                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
+            ui.notify('暂未选中标签', type='info', timeout=1500)
 
     # ── 关联推荐 ──────────────────────────────────────────────────────────
 
@@ -1396,8 +1409,12 @@ class DanbooruSearchUI:
             self._render_related_list(merged, show_nsfw)
 
     def _refresh_related_from_selection(self, selected_tags: list[str], show_nsfw: bool):
+        """仅刷新关联推荐列表。"""
         async def _do():
-            tagger  = await DanbooruTagger.get_instance()
+            if not selected_tags:
+                self._refresh_related([], show_nsfw)
+                return
+            tagger = await DanbooruTagger.get_instance()
             related = await run.io_bound(
                 tagger.get_related,
                 selected_tags,
@@ -1406,14 +1423,24 @@ class DanbooruSearchUI:
                 show_nsfw,
             )
             self._refresh_related(related, show_nsfw)
-            # 异步加载 Group 同类扩展
-            if selected_tags:
-                group_data = await run.io_bound(
-                    tagger.get_group_candidates,
-                    selected_tags,
-                    show_nsfw,
-                )
-                self._render_group_expansion(group_data, selected_tags, show_nsfw)
+        asyncio.ensure_future(_do())
+
+    def _refresh_group_from_selection(self, selected_tags: list[str], show_nsfw: bool):
+        """仅刷新同类扩展区域。"""
+        async def _do():
+            if not selected_tags:
+                if self.group_expansion_container is not None:
+                    self.group_expansion_container.clear()
+                    with self.group_expansion_container:
+                        ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
+                return
+            tagger = await DanbooruTagger.get_instance()
+            group_data = await run.io_bound(
+                tagger.get_group_candidates,
+                selected_tags,
+                show_nsfw,
+            )
+            self._render_group_expansion(group_data, selected_tags, show_nsfw)
         asyncio.ensure_future(_do())
 
     def _render_group_expansion(self, group_data: list, selected_tags: list[str], show_nsfw: bool):
@@ -1452,6 +1479,7 @@ class DanbooruSearchUI:
                         for t in tags:
                             tag = t['tag']
                             cn_first = t['cn_name'].split(',')[0].strip() if t['cn_name'] else ''
+                            cn_full = t.get('cn_name', '')
                             cat = t['category']
                             wiki_text = str(t.get('wiki', ''))
                             row_bg = CAT_BG.get(cat, '')
@@ -1460,12 +1488,10 @@ class DanbooruSearchUI:
                             cat_label = CAT_LABEL.get(cat, '')
                             tooltip_html = ''
                             if wiki_text:
-                                prefix = f'<span style="opacity:0.7;margin-right:4px;">[{cat_label}]</span> ' if cat_label else ''
+                                prefix = f'<span style="opacity:0.7;margin-right:4px;">[{cat_label}]</span>' if cat_label else ''
                                 tooltip_html += f'<div style="margin-bottom:6px;">{prefix}{wiki_text}</div>'
-                            tooltip_html += (
-                                f'<div style="opacity:0.85;">{cn_first}</div>'
-                                if cn_first else ''
-                            )
+                            if cn_full:
+                                tooltip_html += f'<div style="opacity:0.85;">{cn_full}</div>'
 
                             with ui.row().classes(
                                 'w-full items-center gap-1.5 px-2 py-1.5 rounded related-item'
