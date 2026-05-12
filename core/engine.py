@@ -92,7 +92,24 @@ STOP_WORDS: frozenset[str] = frozenset({
     '十分', '非常', '特别', '比较',
     '图片', '画面', '图像',
     '位于', '处于',
-    '许多', '大量', '各种', '所有', '其他', '其它'
+    '许多', '大量', '各种', '所有', '其他', '其它',
+    # ── 英文停用词 ──
+    'a', 'an', 'the',
+    'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'into',
+    'about', 'between', 'through', 'after', 'before', 'above', 'below',
+    'and', 'or', 'but', 'nor', 'so', 'yet',
+    'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'do', 'does', 'did', 'done',
+    'have', 'has', 'had', 'having',
+    'will', 'would', 'shall', 'should', 'can', 'could', 'may', 'might', 'must',
+    'not', 'no', 'very', 'too', 'also', 'just', 'only', 'even', 'still',
+    'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'him', 'his',
+    'she', 'her', 'it', 'its', 'they', 'them', 'their',
+    'this', 'that', 'these', 'those', 'which', 'who', 'whom', 'what',
+    'there', 'here', 'where', 'when', 'how', 'all', 'each', 'every',
+    'some', 'any', 'few', 'more', 'most', 'other', 'such',
+    'than', 'up', 'out', 'if', 'then', 'else', 'while', 'during',
+    'both', 'same', 'own', 'now',
 })
 
 CAT_MAP: dict[str, str] = {
@@ -241,6 +258,7 @@ class DanbooruTagger:
         self._setup_jieba_from_memory()
         self._load_cooc()
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
+        self._tag_names_set: set[str] = set(self._name_to_idx.keys())
         self._rebuild_arrays_from_df()
         self._normalize_embeddings()
         self._load_groups()
@@ -631,6 +649,7 @@ class DanbooruTagger:
 
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
+        self._tag_names_set = set(self._name_to_idx.keys())
         self._rebuild_arrays_from_df()
         self._load_groups()
         self._normalize_embeddings()
@@ -753,67 +772,119 @@ class DanbooruTagger:
             return {'英文': 1.3, '中文核心词': 1.0, '中文扩展词': 0.8, '释义': 0.6}
         return {'英文': 1.0, '中文核心词': 1.0, '中文扩展词': 1.0, '释义': 1.0}
 
-    def _smart_split(self, text: str) -> tuple[list[str], list[str]]:
-        """将查询文本拆分为关键词列表，同时返回分隔后的原始片段。
+    # ── 英文分词辅助 ──────────────────────────────────────────────────────
 
-        两层切分：
-        1. 首先按分隔符切分——空格、换行、中文逗号/顿号/分号/句号均视为
-           用户显式指定的概念边界（中文自然语句不使用这些符号来分隔概念）。
-        2. 若只有一个片段（无显式分隔），完全走原有 jieba 逻辑。
-           若有多片段，每个纯 CJK 片段按长度决定：
-           - ≤ _ATOMIC_CJK_MAX_LEN 字 → 原子概念，直接保留
-           - >  _ATOMIC_CJK_MAX_LEN 字 → 走 jieba 切分（长短语/短句）
-           混合文本（含标点/英文）片段始终走原有逻辑。
+    _EN_MAX_COMPOUND = 4  # 复合标签最大单词数
+
+    def _tokenize_en_chunk(self, chunk: str) -> list[str]:
+        """对一段英文文本做分词：清洗 → 按空格切分 → 过滤停用词/纯数 → 合并已知复合标签。"""
+        cleaned = re.sub(r'[,()\[\]{}:]', ' ', chunk)
+        raw = [p for p in cleaned.split() if p]
+        tag_set = getattr(self, '_tag_names_set', None)
+        tokens: list[str] = []
+        for part in raw:
+            low = part.lower()
+            # 已知标签直接保留（如用户输入了带下划线的 tag 名）
+            if tag_set and low in tag_set:
+                tokens.append(low)
+                continue
+            if low in STOP_WORDS:
+                continue
+            if part.isdigit():      # 仅过滤纯数字，保留 3d/2b 等含数字的词
+                continue
+            tokens.append(low)
+        if not tokens:
+            return []
+        return self._merge_compound_english(tokens)
+
+    def _merge_compound_english(self, tokens: list[str]) -> list[str]:
+        """将相邻英文单词合并为已知的 Danbooru 下划线复合标签。
+
+        贪心最长匹配：优先 4-gram，依次递减到 bigram，匹配到即消耗。
+        例: ['beam', 'rifle', 'scope'] → 如果 'beam_rifle' 是标签则合并，
+             否则保留原样。
+        """
+        tag_set = getattr(self, '_tag_names_set', None)
+        if tag_set is None or len(tokens) < 2:
+            return tokens
+
+        result: list[str] = []
+        i = 0
+        max_w = min(self._EN_MAX_COMPOUND, len(tokens))
+        while i < len(tokens):
+            merged = False
+            for w in range(max_w, 1, -1):          # 4, 3, 2
+                if i + w > len(tokens):
+                    continue
+                candidate = '_'.join(tokens[i:i + w])
+                if candidate in tag_set:
+                    result.append(candidate)
+                    i += w
+                    merged = True
+                    break
+            if not merged:
+                result.append(tokens[i])
+                i += 1
+        return result
+
+    # ── 查询切分 ──────────────────────────────────────────────────────────
+
+    def _smart_split(self, text: str) -> tuple[list[str], list[str]]:
+        """将查询文本拆分为关键词列表，同时返回从句级片段。
+
+        先把文本切成交替的 CN-region（含 CJK 字符）与 EN-region（无 CJK）；
+        中英文用各自的规则处理：
+
+        1. CN-region 按空格/CJK 标点切出"子句"（segments），中文自然语句里
+           这些符号是显式概念边界。子句的 token 切分策略由"整句是否含任何
+           分隔符"决定：
+           - 整句无任何分隔符 → 视作自然句，jieba 切分；
+           - 整句有分隔符 → 用户已标边界，每个短纯 CJK 子句原子保留，
+             超过 _ATOMIC_CJK_MAX_LEN 才走 jieba。
+        2. EN-region 仅走 _tokenize_en_chunk（停用词过滤 + 复合词合并），
+           不产出 segments——英文里空格是词内分隔而非概念边界。
 
         Returns:
-            (tokens, raw_segments):
-            - tokens: 处理后的关键词列表（原子概念或 jieba 切分结果）
-            - raw_segments: 分隔符切分后的原始片段（未经 jieba），用于多粒度查询
+            (tokens, segments):
+            - tokens: 处理后的关键词列表
+            - segments: CN-region 切出的子句片段；纯英文查询为空列表
         """
-        segments = [s.strip() for s in re.split(r'[\s\n\r，、；。]+', text) if s.strip()]
-        if not segments:
+        user_pieces = [s.strip() for s in re.split(r'[\s\n\r，、；。]+', text) if s.strip()]
+        if not user_pieces:
             return [], []
+        has_boundary = len(user_pieces) > 1   # 整句是否含任何用户标注的概念边界
 
         tokens: list[str] = []
-        # 单一片段 → 无显式分隔，完全走原有 jieba 逻辑
-        if len(segments) == 1:
-            segment = segments[0]
-            for chunk in re.split(r'([一-龥]+)', segment):
-                if not chunk.strip():
-                    continue
-                if re.match(r'[一-龥]+', chunk):
-                    tokens.extend(jieba.cut(chunk))
-                else:
-                    cleaned = re.sub(r'[,()\[\]{}:]', ' ', chunk)
-                    for part in cleaned.split():
-                        try:
-                            float(part)
-                        except ValueError:
-                            tokens.append(part)
-            return tokens, segments
+        segments: list[str] = []
 
-        # 多片段 → 每个分隔的片段按长度决定是否原子保留
-        for segment in segments:
-            # 纯 CJK 片段
-            if re.match(r'^[一-龥]+$', segment):
-                if len(segment) <= _ATOMIC_CJK_MAX_LEN:
-                    tokens.append(segment)          # 短 → 原子概念
-                else:
-                    tokens.extend(jieba.cut(segment))  # 长 → jieba 切分
+        # 把文本切成交替的 CN-region 与 EN-region。
+        # CN-region 允许内部以空格/CJK 标点连接相邻 CJK 块。
+        cjk_region = r'[一-龥]+(?:[\s\n\r，、；。]+[一-龥]+)*'
+        parts = re.split(f'({cjk_region})', text)
+
+        for part in parts:
+            if not part.strip():
                 continue
-            # 混合文本 → 原有 jieba 切分逻辑
-            for chunk in re.split(r'([一-龥]+)', segment):
-                if not chunk.strip():
-                    continue
-                if re.match(r'[一-龥]+', chunk):
-                    tokens.extend(jieba.cut(chunk))
-                else:
-                    cleaned = re.sub(r'[,()\[\]{}:]', ' ', chunk)
-                    for part in cleaned.split():
-                        try:
-                            float(part)
-                        except ValueError:
-                            tokens.append(part)
+
+            if re.search(r'[一-龥]', part):
+                # CN region：产出子句 + tokens
+                cn_segs = [s.strip() for s in re.split(r'[\s\n\r，、；。]+', part) if s.strip()]
+                for seg in cn_segs:
+                    segments.append(seg)
+                    if has_boundary and re.match(r'^[一-龥]+$', seg) and len(seg) <= _ATOMIC_CJK_MAX_LEN:
+                        tokens.append(seg)              # 短 → 原子概念
+                    else:
+                        for chunk in re.split(r'([一-龥]+)', seg):
+                            if not chunk.strip():
+                                continue
+                            if re.match(r'[一-龥]+', chunk):
+                                tokens.extend(jieba.cut(chunk))
+                            else:
+                                tokens.extend(self._tokenize_en_chunk(chunk))
+            else:
+                # EN region：仅 tokenize，不产出子句
+                tokens.extend(self._tokenize_en_chunk(part))
+
         return tokens, segments
 
     # ── 关联推荐 ──────────────────────────────────────────────────────────

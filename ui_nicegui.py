@@ -136,6 +136,7 @@ class DanbooruSearchUI:
 
         self.full_table_data: list[dict] = []
         self.current_segments: list[str] = []   # 从句级原始片段，用于区分 chip 颜色
+        self.current_filter_keyword: str = 'ALL'  # 当前选中的分词筛选 keyword（NSFW 切换时复用）
         self.current_query_str: str = ""
         self.full_tags_str: str = ""
         self.full_tags_str_sfw: str = ""
@@ -1096,6 +1097,7 @@ class DanbooruSearchUI:
     # ── 分词筛选 ──────────────────────────────────────────────────────────
 
     def _filter_by_source(self, keyword: str):
+        self.current_filter_keyword = keyword if keyword else 'ALL'
         show_nsfw_val = self.input_nsfw.value
         if not keyword or keyword == 'ALL':
             filtered = self.full_table_data
@@ -1218,6 +1220,7 @@ class DanbooruSearchUI:
             self._refresh_related([], show_nsfw_val)
 
             # 分词筛选 chips
+            self.current_filter_keyword = 'ALL'   # 新搜索默认选中"全部"
             self.keywords_container.clear()
             with self.keywords_container:
                 ui.label('分词筛选:').classes('text-sm text-gray-500 font-bold mr-2')
@@ -1475,7 +1478,7 @@ class DanbooruSearchUI:
                     f'{group_cn} ({len(tags)} 个标签)',
                     icon='label',
                 ).classes('w-full').props('dense'):
-                    with ui.element('div').classes('w-full grid grid-cols-3 gap-1 p-1').style('max-height: 600px; overflow-y: auto;'):
+                    with ui.element('div').classes('w-full grid grid-cols-2 gap-1 p-1').style('max-height: 600px; overflow-y: auto;'):
                         for t in tags:
                             tag = t['tag']
                             cn_first = t['cn_name'].split(',')[0].strip() if t['cn_name'] else ''
@@ -1574,7 +1577,8 @@ class DanbooruSearchUI:
     def on_nsfw_toggle(self, e):
         show_nsfw_val = self.input_nsfw.value
 
-        self.result_table.rows = apply_nsfw_filter(self.full_table_data, show_nsfw_val)
+        # 复用当前分词筛选：同时套用新 NSFW 状态并保持 chip 选中态
+        self._filter_by_source(self.current_filter_keyword)
         if not show_nsfw_val:
             self.result_table.selected = [r for r in self.result_table.selected if r.get('nsfw') != '1']
         self._update_selection_display(None)
