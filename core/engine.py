@@ -37,6 +37,10 @@ from platform_utils import (
 )
 
 
+# 限制 PyTorch CPU 线程数，给 asyncio 事件循环留出至少一个核心。
+torch.set_num_threads(max(1, (os.cpu_count() or 2) - 1))
+
+
 # LRU 缓存
 class LRUCache:
     def __init__(self, maxsize: int):
@@ -158,6 +162,9 @@ class DanbooruTagger:
 
     _instance: Optional['DanbooruTagger'] = None
     _lock: Optional[asyncio.Lock] = None
+    # 进程级搜索并发信号量：串行化 search()，避免多个 model.encode()
+    # 并发抢占 CPU 而拖垮事件循环。
+    _search_sem: Optional[asyncio.Semaphore] = None
 
     @classmethod
     def is_ready(cls) -> bool:
@@ -536,6 +543,21 @@ class DanbooruTagger:
         self._search_cache.put(cache_key, response)
         return response
 
+    @classmethod
+    def _get_search_sem(cls) -> asyncio.Semaphore:
+        if cls._search_sem is None:
+            cls._search_sem = asyncio.Semaphore(1)
+        return cls._search_sem
+
+    async def search_async(self, request: SearchRequest) -> SearchResponse:
+        """search() 的并发安全异步封装：信号量串行化 + 线程池执行。
+
+        所有异步入口（MCP / API / UI）都应改用本方法，而非各自
+        asyncio.to_thread(self.search)，以共享同一个并发闸门。
+        """
+        async with self._get_search_sem():
+            return await asyncio.to_thread(self.search, request)
+
     def _apply_group_expand(self, final: dict[str, TagResult]) -> None:
         """expand 模式：提升同 group 标签的分数。"""
         BETA = 0.2
@@ -777,7 +799,11 @@ class DanbooruTagger:
     _EN_MAX_COMPOUND = 4  # 复合标签最大单词数
 
     def _tokenize_en_chunk(self, chunk: str) -> list[str]:
-        """对一段英文文本做分词：清洗 → 按空格切分 → 过滤停用词/纯数 → 合并已知复合标签。"""
+        """对一段英文文本做分词：清洗 → 按空格切分 → 过滤停用词/纯数 → 变体规范化 → 合并已知复合标签。
+
+        变体规范化指：未直接命中 tag_set 的 token 尝试 `连字符→下划线` /
+        复数还原（s/es/ies→y），仅在变体落在 tag_set 才采用。
+        """
         cleaned = re.sub(r'[,()\[\]{}:]', ' ', chunk)
         raw = [p for p in cleaned.split() if p]
         tag_set = getattr(self, '_tag_names_set', None)
@@ -790,12 +816,55 @@ class DanbooruTagger:
                 continue
             if low in STOP_WORDS:
                 continue
+            # 连字符/复数变体探测（仅当变体落在 tag_set 才采用）
+            variant = self._resolve_tag_variant(low)
+            if variant:
+                tokens.append(variant)
+                continue
             if part.isdigit():      # 仅过滤纯数字，保留 3d/2b 等含数字的词
                 continue
             tokens.append(low)
         if not tokens:
             return []
         return self._merge_compound_english(tokens)
+
+    def _resolve_tag_variant(self, low: str) -> str | None:
+        """对未直接命中 tag_set 的英文 token 探测常见变体。
+
+        覆盖：连字符→下划线（cat-ears → cat_ears）、复数→单数
+        （cats → cat / dresses → dress / bunnies → bunny）。
+        仅在变体落在 _tag_names_set 中才返回，避免 'glass'→'glas' 之类误伤。
+
+        Returns:
+            命中的 tag 名；都不命中返回 None。
+        """
+        tag_set = getattr(self, '_tag_names_set', None)
+        if not tag_set:
+            return None
+
+        # 连字符直接换成下划线若直接命中 tag 则优先返回
+        bases = [low]
+        if '-' in low:
+            hyphen_normalized = low.replace('-', '_')
+            if hyphen_normalized in tag_set:
+                return hyphen_normalized
+            bases.append(hyphen_normalized)
+
+        # 对每个基串尝试复数还原（按"剥离短→长"顺序，避免 houses→hous 误判）
+        for base in bases:
+            if base.endswith('s') and len(base) > 1:
+                v = base[:-1]
+                if v in tag_set:
+                    return v
+            if base.endswith('es') and len(base) > 2:
+                v = base[:-2]
+                if v in tag_set:
+                    return v
+            if base.endswith('ies') and len(base) > 3:
+                v = base[:-3] + 'y'
+                if v in tag_set:
+                    return v
+        return None
 
     def _merge_compound_english(self, tokens: list[str]) -> list[str]:
         """将相邻英文单词合并为已知的 Danbooru 下划线复合标签。

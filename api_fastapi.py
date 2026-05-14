@@ -104,8 +104,8 @@ async def search(body: SearchIn) -> SearchOut:
     # SearchIn → core.models.SearchRequest（两者字段一一对应，直接解包）
     request = SearchRequest(**body.model_dump())
 
-    # 在线程池中运行阻塞的 search()
-    response: SearchResponse = await asyncio.to_thread(tagger.search, request)
+    # 并发安全的异步 search（信号量串行化 + 线程池执行）
+    response: SearchResponse = await tagger.search_async(request)
 
     # 计数：每次 API 搜索调用均计入搜索、成功、复制；访问不变
     await counter.increment()

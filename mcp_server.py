@@ -17,12 +17,28 @@ MCP 服务层
 
 import json
 import asyncio
+import logging
+from anyio import BrokenResourceError, ClosedResourceError
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from core.engine import DanbooruTagger
 from core.models import SearchRequest
 import core.counter as counter
 import re
+
+
+# ── 过滤客户端断连产生的无害报错噪音 ──────────────────────────────────
+class _SuppressClientDisconnect(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        if isinstance(exc, (BrokenResourceError, ClosedResourceError)):
+            return False  # 丢弃该日志记录
+        return True
+
+
+_disconnect_filter = _SuppressClientDisconnect()
+logging.getLogger("mcp.server.streamable_http").addFilter(_disconnect_filter)
+logging.getLogger("uvicorn.error").addFilter(_disconnect_filter)
 
 
 mcp = FastMCP(
@@ -198,7 +214,7 @@ Each result: tag, cn_name, category, final_score, count[, wiki if include_wiki=T
         group_mode=group_mode,
         max_per_group=max_per_group,
     )
-    response = await asyncio.to_thread(tagger.search, request)
+    response = await tagger.search_async(request)
     # 计数：每次 MCP 搜索调用均计入搜索、成功、复制；访问不变
     await counter.increment()
     await counter.increment_success()
@@ -307,7 +323,7 @@ JSON array sorted by aggregated NPMI score (descending). Each result:
                     use_segmentation=False,
                     target_layers=['英文']
                 )
-                resp = await asyncio.to_thread(tagger.search, req)
+                resp = await tagger.search_async(req)
                 if resp.results:
                     corrections[bad_tag] = resp.results[0].tag
             except Exception:

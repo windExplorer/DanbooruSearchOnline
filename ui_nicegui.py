@@ -1179,7 +1179,7 @@ class DanbooruSearchUI:
                 group_mode=self.input_group_mode.value if self.input_group_mode else 'off',
                 max_per_group=int(self.input_max_per_group.value) if self.input_max_per_group else 2,
             )
-            response = await run.io_bound(tagger.search, request)
+            response = await tagger.search_async(request)
 
             # 后台计数
             async def silent_counter_update():
