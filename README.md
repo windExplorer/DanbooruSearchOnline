@@ -340,9 +340,16 @@ POST /api/related
 本工具提供 MCP（Model Context Protocol）服务，支持将搜索引擎直接接入 Claude Desktop、Cursor、Cherry Studio 等支持 MCP 协议的大模型客户端，让 AI 能够在对话中直接调用标签搜索能力。
 
 **MCP 服务地址：**
+
 ```
 https://sakizuki-danboorusearch.hf.space/mcp/mcp
 ```
+
+```
+https://sakizuki-danboorusearchonline.ms.show/mcp/mcp
+```
+
+以上两个端口提供完全相同的服务，互为备份
 
 ### 接入方法
 
