@@ -471,7 +471,18 @@ class DanbooruSearchUI:
             with self.init_banner:
                 with ui.row().classes('items-center gap-3 p-2'):
                     ui.spinner(size='sm')
-                    ui.label('引擎初始化中，请稍候…首次加载约需 15 秒').classes('text-sm text-blue-700')
+                    ui.label('引擎初始化中，请稍候…约需 5~10 分钟').classes('text-sm text-blue-700')
+                from platform_utils import PLATFORM
+                _alt_url = (
+                    'https://www.modelscope.cn/studios/SAkizuki/DanbooruSearchOnline'
+                    if PLATFORM == 'hf' else
+                    'https://huggingface.co/spaces/SAkizuki/DanbooruSearch'
+                )
+                ui.html(
+                    f'初始化期间，您可以使用'
+                    f'<a href="{_alt_url}" target="_blank" rel="noopener noreferrer" '
+                    f'class="text-blue-600 hover:text-blue-800 underline font-bold">备用服务</a>'
+                ).classes('text-xs text-blue-600 px-6 pb-3')
             self.init_banner.set_visibility(not DanbooruTagger.is_ready())
             if not DanbooruTagger.is_ready():
                 asyncio.ensure_future(self._hide_banner_when_ready())

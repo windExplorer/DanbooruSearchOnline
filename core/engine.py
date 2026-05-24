@@ -25,7 +25,8 @@ import jieba
 import numpy as np
 import pandas as pd
 import torch
-from safetensors.torch import load_file as st_load, save_file as st_save
+from safetensors.torch import save_file as st_save
+from safetensors import safe_open
 from sentence_transformers import SentenceTransformer
 
 from .models import SearchRequest, SearchResponse, TagResult
@@ -699,11 +700,39 @@ class DanbooruTagger:
         print(f'[Engine] 缓存保存完成（{len(self.df)} 条记录），生成时间: {current_time}')
 
     def _load_from_cache(self) -> None:
-        tensors = st_load(str(self.paths.embeddings), device=self.device)
-        for _, attr, _ in _LAYER_SPEC:
-            setattr(self, attr, tensors[attr].float())
-        self.df = pd.read_parquet(str(self.paths.metadata))
+        t0 = time.time()
+        emb_path = str(self.paths.embeddings)
+        meta_path = str(self.paths.metadata)
+        emb_size_mb = self.paths.embeddings.stat().st_size / 1024 / 1024
+        meta_size_mb = self.paths.metadata.stat().st_size / 1024 / 1024
+
+        # ── 步骤 1/3: embedding 文件（逐层加载以显示进度）─────────────────
+        n_layers = len(_LAYER_SPEC)
+        print(f'  [1/3] 加载 embedding ({emb_size_mb:.0f} MB, {n_layers} 层) ...')
+        with safe_open(emb_path, framework="pt", device=self.device) as f:
+            for i, (name, attr, _) in enumerate(_LAYER_SPEC, 1):
+                shape = f.get_shape(attr)
+                shape_str = '×'.join(str(d) for d in shape)
+                print(f'    [{i}/{n_layers}] {attr:12s} ({shape_str}) ...', end=' ', flush=True)
+                _t = time.time()
+                tensor = f.get_tensor(attr)
+                setattr(self, attr, tensor.float())
+                print(f'✓ {time.time() - _t:.1f}s')
+        print(f'  [1/3] ✓ {time.time() - t0:.1f}s')
+
+        # ── 步骤 2/3: 元数据 ──────────────────────────────────────────────
+        print(f'  [2/3] 加载元数据 ({meta_size_mb:.0f} MB) ...', end=' ', flush=True)
+        _t = time.time()
+        self.df = pd.read_parquet(meta_path)
+        print(f'✓ {time.time() - _t:.1f}s  ({len(self.df):,} 条)')
+
+        # ── 步骤 3/3: 统计信息 ────────────────────────────────────────────
+        print(f'  [3/3] 计算统计信息 ...', end=' ', flush=True)
+        _t = time.time()
         self.max_log_count = float(np.log1p(self.df['post_count'].max()))
+        print(f'✓ {time.time() - _t:.1f}s')
+
+        print(f'[Engine] 缓存加载完成 (总耗时 {time.time() - t0:.1f}s)')
 
     def _cached_schema_version(self) -> int:
         try:
