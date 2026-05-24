@@ -711,9 +711,7 @@ class DanbooruTagger:
         print(f'  [1/3] 加载 embedding ({emb_size_mb:.0f} MB, {n_layers} 层) ...')
         with safe_open(emb_path, framework="pt", device=self.device) as f:
             for i, (name, attr, _) in enumerate(_LAYER_SPEC, 1):
-                shape = f.get_shape(attr)
-                shape_str = '×'.join(str(d) for d in shape)
-                print(f'    [{i}/{n_layers}] {attr:12s} ({shape_str}) ...', end=' ', flush=True)
+                print(f'    [{i}/{n_layers}] {attr:12s} ...', end=' ', flush=True)
                 _t = time.time()
                 tensor = f.get_tensor(attr)
                 setattr(self, attr, tensor.float())
