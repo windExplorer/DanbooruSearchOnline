@@ -56,6 +56,18 @@ class _SuppressMCPNoise(logging.Filter):
 
 logging.getLogger("uvicorn.error").addFilter(_SuppressMCPNoise())
 
+# suppress MCP OAuth discovery 404 noise (clients probing .well-known/oauth-authorization-server)
+class _SuppressOAuthNoise(logging.Filter):
+    _MARKER = ".well-known/oauth-authorization-server"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if self._MARKER in record.getMessage():
+            return False
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(_SuppressOAuthNoise())
+logging.getLogger("nicegui").addFilter(_SuppressOAuthNoise())
+
 # ── 表格列定义 ─────────────────────────────────────────────────────────────────
 
 TABLE_COLUMNS = [
@@ -150,6 +162,9 @@ class DanbooruSearchUI:
         self.selected_chips_container = None  # 已选标签 chip 容器
         self.current_related: list = []
         self.chip_extra_selected: set = set()
+        # 去抖任务句柄（取消旧任务避免 CPU 洪峰）
+        self._debounce_related_task = None  # type: asyncio.Task | None
+        self._debounce_group_task = None    # type: asyncio.Task | None
 
         # tag -> prompt 权重，范围 [0.1, 1.9]，默认 1.0
         self.tag_weights: dict[str, float] = {}
@@ -1233,24 +1248,31 @@ class DanbooruSearchUI:
             # 分词筛选 chips
             self.current_filter_keyword = 'ALL'   # 新搜索默认选中"全部"
             self.keywords_container.clear()
+            cached_set = set(response.cached_queries) if response.cached_queries else set()
             with self.keywords_container:
                 ui.label('分词筛选:').classes('text-sm text-gray-500 font-bold mr-2')
                 ui.chip('全部', on_click=lambda: self._filter_by_source('ALL')) \
                     .props('color=primary text-color=white clickable')
                 use_seg = self.input_segment.value if self.input_segment else True
                 if use_seg:
-                    ui.chip('整句',
-                            on_click=lambda: self._filter_by_source(self.current_query_str)) \
-                        .props('color=grey-4 text-color=black clickable')
+                    whole = ui.chip('整句',
+                            on_click=lambda: self._filter_by_source(self.current_query_str))
+                    whole.props('color=grey-4 text-color=black clickable')
+                    if self.current_query_str in cached_set:
+                        whole.style('outline: 1px dashed rgba(128,128,128,0.3); outline-offset: 1px;')
                     # 从句级原始片段（分隔符切分后未 jieba 的长片段，区别于关键词）
                     for seg in response.segments:
-                        ui.chip(seg,
-                                on_click=lambda s=seg: self._filter_by_source(s)) \
-                            .props('color=blue-1 text-color=blue-8 clickable')
+                        sc = ui.chip(seg,
+                                on_click=lambda s=seg: self._filter_by_source(s))
+                        sc.props('color=blue-1 text-color=blue-8 clickable')
+                        if seg in cached_set:
+                            sc.style('outline: 1px dashed rgba(128,128,128,0.3); outline-offset: 1px;')
                     for kw in response.keywords:
-                        ui.chip(kw,
-                                on_click=lambda k=kw: self._filter_by_source(k)) \
-                            .props('color=grey-4 text-color=black clickable')
+                        kc = ui.chip(kw,
+                                on_click=lambda k=kw: self._filter_by_source(k))
+                        kc.props('color=grey-4 text-color=black clickable')
+                        if kw in cached_set:
+                            kc.style('outline: 1px dashed rgba(128,128,128,0.3); outline-offset: 1px;')
                 else:
                     ui.label('(分词已关闭)').classes('text-xs text-gray-400')
 
@@ -1423,25 +1445,31 @@ class DanbooruSearchUI:
             self._render_related_list(merged, show_nsfw)
 
     def _refresh_related_from_selection(self, selected_tags: list[str], show_nsfw: bool):
-        """仅刷新关联推荐列表。"""
+        """仅刷新关联推荐列表（300ms 去抖，避免快速勾选产生 CPU 洪峰）。"""
+        # 取消上次未执行的刷新
+        if self._debounce_related_task and not self._debounce_related_task.done():
+            self._debounce_related_task.cancel()
         async def _do():
+            await asyncio.sleep(0.3)
             if not selected_tags:
                 self._refresh_related([], show_nsfw)
                 return
             tagger = await DanbooruTagger.get_instance()
-            related = await run.io_bound(
-                tagger.get_related,
+            related = await tagger.get_related_async(
                 selected_tags,
                 set(selected_tags),
                 50,
                 show_nsfw,
             )
             self._refresh_related(related, show_nsfw)
-        asyncio.ensure_future(_do())
+        self._debounce_related_task = asyncio.ensure_future(_do())
 
     def _refresh_group_from_selection(self, selected_tags: list[str], show_nsfw: bool):
-        """仅刷新同类扩展区域。"""
+        """仅刷新同类扩展区域（300ms 去抖，避免快速勾选产生 CPU 洪峰）。"""
+        if self._debounce_group_task and not self._debounce_group_task.done():
+            self._debounce_group_task.cancel()
         async def _do():
+            await asyncio.sleep(0.3)
             if not selected_tags:
                 if self.group_expansion_container is not None:
                     self.group_expansion_container.clear()
@@ -1449,13 +1477,12 @@ class DanbooruSearchUI:
                         ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
                 return
             tagger = await DanbooruTagger.get_instance()
-            group_data = await run.io_bound(
-                tagger.get_group_candidates,
+            group_data = await tagger.get_group_candidates_async(
                 selected_tags,
                 show_nsfw,
             )
             self._render_group_expansion(group_data, selected_tags, show_nsfw)
-        asyncio.ensure_future(_do())
+        self._debounce_group_task = asyncio.ensure_future(_do())
 
     def _render_group_expansion(self, group_data: list, selected_tags: list[str], show_nsfw: bool):
         """渲染 Group 同类扩展区域。"""
@@ -1753,6 +1780,7 @@ if __name__ in {'__main__', '__mp_main__'}:
     async def head_root():
         return PlainTextResponse('')
 
+
     ui.run(
         host=host,
         port=port,
@@ -1761,3 +1789,4 @@ if __name__ in {'__main__', '__mp_main__'}:
         show=not is_cloud(),
         reconnect_timeout=120,
     )
+

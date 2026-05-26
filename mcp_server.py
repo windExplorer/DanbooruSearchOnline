@@ -64,8 +64,9 @@ Only supported for general, copyright, and character tag searches; **artists and
 - search_mode: Preset strategy. Pick the one that matches your intent.
     "full_scene"       — Full scene → prompt (e.g. "一个穿着白色水手服的少女在雨中奔跑")
     "concept_explore"  — Vague concept exploration, broad recall (e.g. "赛博朋克服装", "兔耳朵", "中国风汉服")
-    "subject_describe" — Describe a subject to find matching tags (e.g. "EVA中蓝发的驾驶员", "两侧有开口，前方有拉绳的运动短裤")
+    "subject_describe" — Describe **one** subject to find matching tags (e.g. "EVA中蓝发的驾驶员", "两侧有开口，前方有拉绳的运动短裤")
     "precise_lookup"   — Precise lookup / spell fix (e.g. "selafuku", "thighhigh")
+- HINT: In subject_describe mode, the tokenizer is disabled, and you can only describe one thing at a time. To search for multiple things at once, use concept_explore or full_scene.
 - category: Filter to a specific tag category. Default "all".
     "all"       — All (通用 + 版权 + 人物)
     "general"   — Visual attributes, clothing, pose, background, etc.
@@ -258,8 +259,7 @@ JSON array sorted by aggregated NPMI score (descending). Each result:
         elif t in corrections:
             corrected_tags.append(corrections[t])
 
-    results = await asyncio.to_thread(
-        tagger.get_related,
+    results = await tagger.get_related_async(
         corrected_tags,
         set(corrected_tags),
         limit,

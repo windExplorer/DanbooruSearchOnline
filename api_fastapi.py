@@ -26,7 +26,6 @@ FastAPI 适配层（可选）。
 
 from __future__ import annotations
 
-import asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
@@ -130,8 +129,7 @@ async def related(body: RelatedIn) -> list[RelatedTagOut]:
     - show_nsfw：是否包含 NSFW 标签，默认 True
     """
     tagger = await DanbooruTagger.get_instance()
-    results = await asyncio.to_thread(
-        tagger.get_related,
+    results = await tagger.get_related_async(
         body.tags,
         set(body.tags),   # exclude 已选标签自身
         body.limit,

@@ -61,3 +61,4 @@ class SearchResponse:
     results: list[TagResult]
     keywords: list[str]
     segments: list[str] = field(default_factory=list)  # 分隔符切分后的原始从句级片段
+    cached_queries: list[str] = field(default_factory=list)  # 命中 emb 缓存的查询文本

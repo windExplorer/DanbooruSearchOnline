@@ -163,9 +163,9 @@ class DanbooruTagger:
 
     _instance: Optional['DanbooruTagger'] = None
     _lock: Optional[asyncio.Lock] = None
-    # 进程级搜索并发信号量：串行化 search()，避免多个 model.encode()
-    # 并发抢占 CPU 而拖垮事件循环。
-    _search_sem: Optional[asyncio.Semaphore] = None
+    # 进程级 CPU 并发闸门：串行化所有 CPU 密集型操作（search / get_related /
+    # get_group_candidates），避免并发抢占 CPU 而拖垮 asyncio 事件循环。
+    _cpu_sem: Optional[asyncio.Semaphore] = None
 
     @classmethod
     def is_ready(cls) -> bool:
@@ -346,10 +346,15 @@ class DanbooruTagger:
 
     # ── 搜索 ──────────────────────────────────────────────────────────────
 
-    def _encode_queries(self, queries: list[str]) -> torch.Tensor:
-        """批量编码查询词，命中 embedding 缓存的跳过 model.encode。"""
+    def _encode_queries(self, queries: list[str]) -> tuple[torch.Tensor, list[bool]]:
+        """批量编码查询词，命中 embedding 缓存的跳过 model.encode。
+
+        Returns:
+            (q_emb, hit_mask): 编码后的张量 (Q, D) 以及每个 query 是否命中缓存。
+        """
         cached_vecs: list[Optional[torch.Tensor]] = [self._emb_cache.get(q) for q in queries]
         uncached_idx = [i for i, v in enumerate(cached_vecs) if v is None]
+        hit_mask = [v is not None for v in cached_vecs]
 
         if uncached_idx:
             uncached_texts = [queries[i] for i in uncached_idx]
@@ -362,7 +367,7 @@ class DanbooruTagger:
                 self._emb_cache.put(queries[i], emb)
                 cached_vecs[i] = emb
 
-        return torch.stack(cached_vecs)  # type: ignore[arg-type]
+        return torch.stack(cached_vecs), hit_mask  # type: ignore[arg-type]
 
     def search(self, request: SearchRequest) -> SearchResponse:
         if not self.is_loaded:
@@ -396,7 +401,7 @@ class DanbooruTagger:
             extra_segments = []
             queries  = [request.query]
 
-        q_emb = self._encode_queries(queries)
+        q_emb, hit_mask = self._encode_queries(queries)
 
         tl    = request.target_layers
         k     = request.top_k
@@ -473,17 +478,23 @@ class DanbooruTagger:
         # 对每个候选标签，计算其与完整原始查询（而非分词片段）的语义相似度，
         # 将相似度作为软因子乘入 final_score，使仅由分词碎片匹配到的噪声
         # 标签自然下沉，同时不硬过滤任何结果。
+        # 批量矩阵乘法替代逐条 torch.dot，O(R*L) 降为 O(L) + O(R)。
         full_q = q_emb[0]          # queries[0] 始终为完整原始查询
-        alpha  = 0.3 if SearchRequest.use_segmentation else 0   # 一致性调节强度（0=不调节, 1=完全按一致性重排），仅在启用分词时有意义
-        for r in final.values():
-            idx = self._name_to_idx[r.tag]
-            max_co = 0.0
+        alpha  = 0.3 if request.use_segmentation else 0   # 一致性调节强度（0=不调节, 1=完全按一致性重排），仅在启用分词时有意义
+        if alpha > 0 and final:
+            tag_list = list(final.keys())
+            tag_indices = [self._name_to_idx[t] for t in tag_list]
+            idx_tensor = torch.tensor(tag_indices, dtype=torch.long, device=full_q.device)
+            max_co = torch.zeros(len(tag_indices), device=full_q.device)
             for ln, attr, _ in _LAYER_SPEC:
                 if ln not in tl:
                     continue
-                max_co = max(max_co, float(torch.dot(full_q, getattr(self, attr)[idx])))
-            # coherence=0 时最多扣 alpha=15%；coherence=1 时不扣分
-            r.final_score = round(r.final_score * (1.0 - alpha + alpha * max_co), 4)
+                emb_selected = getattr(self, attr)[idx_tensor]       # (R, D)
+                co = (full_q.unsqueeze(0) @ emb_selected.T).squeeze(0)  # (R,)
+                max_co = torch.maximum(max_co, co)
+            for i, tag in enumerate(tag_list):
+                r = final[tag]
+                r.final_score = round(r.final_score * (1.0 - alpha + alpha * float(max_co[i])), 4)
 
         # Group expand 处理（在 guaranteed_tags 之前，因为会改分数）
         if request.group_mode == "expand" and self._tag_to_groups:
@@ -537,27 +548,59 @@ class DanbooruTagger:
 
         tags_all = ', '.join(r.tag for r in valid)
         tags_sfw = ', '.join(r.tag for r in valid if r.nsfw != '1')
+        cached_queries = [q for q, hit in zip(queries, hit_mask) if hit]
         response = SearchResponse(
             tags_all=tags_all, tags_sfw=tags_sfw,
             results=valid, keywords=keywords, segments=extra_segments,
+            cached_queries=cached_queries,
         )
         self._search_cache.put(cache_key, response)
         return response
 
+    # ── CPU 并发闸门（类级信号量，所有 CPU 密集型操作共享）───────────────
+
     @classmethod
-    def _get_search_sem(cls) -> asyncio.Semaphore:
-        if cls._search_sem is None:
-            cls._search_sem = asyncio.Semaphore(1)
-        return cls._search_sem
+    def _get_cpu_sem(cls) -> asyncio.Semaphore:
+        if cls._cpu_sem is None:
+            cls._cpu_sem = asyncio.Semaphore(1)
+        return cls._cpu_sem
 
     async def search_async(self, request: SearchRequest) -> SearchResponse:
-        """search() 的并发安全异步封装：信号量串行化 + 线程池执行。
+        """search() 的并发安全异步封装：共享闸门串行化 + 线程池执行。
 
         所有异步入口（MCP / API / UI）都应改用本方法，而非各自
-        asyncio.to_thread(self.search)，以共享同一个并发闸门。
+        asyncio.to_thread(self.search)，以共享同一个 CPU 并发闸门。
+        包含 60 秒超时，防止异常卡死导致信号量永久泄漏。
         """
-        async with self._get_search_sem():
-            return await asyncio.to_thread(self.search, request)
+        async with self._get_cpu_sem():
+            return await asyncio.wait_for(
+                asyncio.to_thread(self.search, request),
+                timeout=60.0,
+            )
+
+    async def get_related_async(
+        self,
+        seed_tags: list[str],
+        exclude: set[str] | None = None,
+        limit: int = 20,
+        show_nsfw: bool = True,
+    ) -> list:
+        """get_related() 的并发安全异步封装，共享同一个 CPU 闸门。"""
+        async with self._get_cpu_sem():
+            return await asyncio.to_thread(
+                self.get_related, seed_tags, exclude, limit, show_nsfw,
+            )
+
+    async def get_group_candidates_async(
+        self,
+        selected_tags: list[str],
+        show_nsfw: bool = True,
+    ) -> list[dict]:
+        """get_group_candidates() 的并发安全异步封装，共享同一个 CPU 闸门。"""
+        async with self._get_cpu_sem():
+            return await asyncio.to_thread(
+                self.get_group_candidates, selected_tags, show_nsfw,
+            )
 
     def _apply_group_expand(self, final: dict[str, TagResult]) -> None:
         """expand 模式：提升同 group 标签的分数。"""
