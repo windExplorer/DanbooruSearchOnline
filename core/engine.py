@@ -575,7 +575,7 @@ class DanbooruTagger:
         async with self._get_cpu_sem():
             return await asyncio.wait_for(
                 asyncio.to_thread(self.search, request),
-                timeout=60.0,
+                timeout=120.0,
             )
 
     async def get_related_async(
@@ -1270,7 +1270,7 @@ class DanbooruTagger:
             g: np.array(idxs, dtype=np.int64) for g, idxs in group_members.items()
         }
 
-        self._group_cn_names = data.get('group_cn_names', {})
+        self._group_cn_names = data.get("group_cn_names", {})
 
         print(f'[Engine] Tag Group loaded, {len(self._tag_to_groups)} tags, '
               f'{len(self._group_to_tags_idx)} groups, '

@@ -11,8 +11,9 @@ MCP 服务层
     https://sakizuki-danboorusearch.hf.space/mcp/mcp
 
 支持的工具：
-    search_tags      自然语言搜索标签
-    get_related_tags 基于共现表查关联推荐
+    search_tags       自然语言搜索标签
+    get_related_tags  基于共现表查关联推荐
+    get_anima_format  返回 Anima 模型 Hybrid 提示词格式规范
 """
 
 import json
@@ -27,17 +28,40 @@ import core.counter as counter
 import re
 
 
-# ── 过滤客户端断连产生的无害报错噪音 ──────────────────────────────────
+# ── 过滤客户端断连/超时产生的无害报错噪音 ──────────────────────────────
 class _SuppressClientDisconnect(logging.Filter):
+    _SUPPRESSED: tuple = ()
+    _HAS_STARLETTE: bool = False
+
+    @classmethod
+    def _init_suppressed(cls):
+        if cls._SUPPRESSED:
+            return
+        types: list = [BrokenResourceError, ClosedResourceError, asyncio.CancelledError]
+        try:
+            from starlette.requests import ClientDisconnect
+            types.append(ClientDisconnect)
+            cls._HAS_STARLETTE = True
+        except ImportError:
+            pass
+        cls._SUPPRESSED = tuple(types)
+
     def filter(self, record: logging.LogRecord) -> bool:
+        self._init_suppressed()
         exc = record.exc_info[1] if record.exc_info else None
-        if isinstance(exc, (BrokenResourceError, ClosedResourceError)):
-            return False  # 丢弃该日志记录
+        if isinstance(exc, self._SUPPRESSED):
+            return False
+        # 用类名字符串兜底（避免 starlette 版本差异导致 import 失败）
+        if exc is not None and not self._HAS_STARLETTE:
+            name = type(exc).__name__
+            if name in ('ClientDisconnect',):
+                return False
         return True
 
 
 _disconnect_filter = _SuppressClientDisconnect()
 logging.getLogger("mcp.server.streamable_http").addFilter(_disconnect_filter)
+logging.getLogger("mcp.server").addFilter(_disconnect_filter)
 logging.getLogger("uvicorn.error").addFilter(_disconnect_filter)
 
 
@@ -129,7 +153,12 @@ Each result: tag, cn_name, category, final_score, count[, wiki if include_wiki=T
         group_mode=preset["group_mode"],
         max_per_group=preset["max_per_group"],
     )
-    response = await tagger.search_async(request)
+    try:
+        response = await tagger.search_async(request)
+    except asyncio.TimeoutError:
+        return json.dumps({
+            "error": "搜索超时（120s），请简化查询或稍后重试",
+        }, ensure_ascii=False, indent=2)
     # 计数：每次 MCP 搜索调用均计入搜索、成功、复制；访问不变
     await counter.increment()
     await counter.increment_success()
@@ -297,3 +326,194 @@ JSON array sorted by aggregated NPMI score (descending). Each result:
         }
 
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+# ── Anima 提示词格式说明 ─────────────────────────────────────────────────
+_ANIMA_FORMAT_INSTRUCTION = """请严格按以下 Anima 混合提示词（Hybrid Prompt）规范，基于提供的标签和用户描述，输出最终结果。
+
+# Anima Prompt Composer
+
+## Overview
+
+将已有的 Danbooru 风格标签数据整合为 Anima 模型的最优 Hybrid 提示词。该 Skill 假定调用方已经拥有充足的标签信息（通过 Tagger、Captioner 或用户输入），仅负责按 Anima 的格式规范与社区验证的最佳实践进行结构化组装。
+
+## 核心设计理念
+
+Anima 是一个 2B 参数的文生图模型（CircleStone Labs × Comfy Org），基于 NVIDIA Cosmos-Predict2-2B，使用 Qwen 3 0.6B 文本编码器。它同时理解 Danbooru 标签和自然语言，但两者的行为有本质差异——标签掌控结构与精度，自然语言掌控氛围与构图。
+
+社区的共识结论：
+- **纯标签提示词**：线条锐利、色彩平整、几乎没有解剖错误，但画面扁平，缺乏光影、氛围、构图的精确控制。
+- **纯自然语言提示词**：细节丰富、光影动态、气氛到位，但超过 2~3 段后结构崩塌，手部最先出问题。
+- **Hybrid 混合模式**：标签主导主体结构，自然语言补充环境与氛围，获得约 80% 的主体控制力加完整的氛围控制力。
+
+核心风险：自然语言的影响力 **远强于** 标签。当你用自然语言描述背景时，模型会忽略 `close-up`、`upper body` 等取景标签，生成广角镜头。解决方案是对取景标签使用权重语法。
+
+## 输出格式
+
+````markdown
+## Prompt
+```
+[标签块：逗号分隔，单行]
+
+[自然语言段落：2 到 3 句英文]
+```
+
+## 中文解释
+
+[分点说明提示词设计逻辑，包含Prompt自然语言段落的完整翻译]
+````
+
+**绝对禁止**在任何部分之外添加开场白、寒暄或总结。
+
+## 标签格式化规则
+
+- 所有标签小写，下划线 `_` 替换为空格。**唯一例外**：`score_1` 到 `score_9` 保持下划线。
+- 标签内括号用反斜杠转义：`momoko (momopoco)` → `momoko \\(momopoco\\)`
+- 标签间用一个逗号加一个空格连接：`tag a, tag b, tag c`
+- 不要编造不存在的标签。若不确定某标签是否存在，将该概念放入自然语言段落。
+- Tag Dropout 机制意味着不需要塞入每一个相关标签——只保留最关键和区分性最强的。
+
+## 标签块结构规则
+
+### 官方推荐标签顺序
+```
+[quality/meta/year/safety] → [1girl/1boy/1other] → [character] → [series] → [@artist] → [general tags]
+```
+
+### 单人物详细结构
+```
+[quality/meta/safety], [1girl/1boy], [character name], [series], [@artist], [hair], [eyes], [clothing], [body/pose], [expression], [action], [background/atmosphere], [composition tags]
+```
+
+### 多人物详细结构（防串扰核心规则）
+```
+[quality/meta/safety], [2girls / 1girl 1boy],
+[character_A name], [series_A], [A hair], [A eyes], [A clothing], [A body], [A expression],
+[character_B name], [series_B], [B hair], [B eyes], [B clothing], [B body], [B expression],
+[shared pose/action], [background], [atmosphere], [composition]
+```
+
+## 标签体系速查
+
+### 质量标签（任选其一或混用）
+- 人工评分系：`masterpiece`, `best quality`, `good quality`, `normal quality`, `low quality`, `worst quality`
+- 美学评分系：`score_9`, `score_8`, `score_7`, `score_6` ... `score_1`（仅score标签保留下划线）
+
+### 年代标签
+- 具体年份：`year 2025`, `year 2024` ...
+- 时期：`newest` (2022-2023), `recent` (2019-2021), `mid` (2015-2018), `early` (2011-2014), `old` (2005-2010)
+
+### 元标签
+`highres`, `absurdres`, `anime screenshot`, `jpeg artifacts`, `official art`
+
+### 安全分级
+`safe`, `sensitive`, `nsfw`, `explicit`
+
+### 艺术家标签
+**必须以 @ 开头**。没有 @ 前缀的风格几乎不生效。
+
+格式：`@nnn yryr`, `@big chungus`
+
+### 数据集标签（非动漫风格时的备选）
+在提示词最开头另起一行使用，可大幅改变风格倾向：
+- `ye-pop`：LAION-POP 数据集风格，偏抽象/油画/概念艺术
+- `deviantart`：DeviantArt 数据集风格，偏数字绘画/插画
+
+## 自然语言段落规则
+
+自然语言段落严格 2 到 3 句英文，仅用于标签难以精确表达的内容：
+
+1. **镜头取景**：angle、shot distance、framing (close-up, wide shot, dutch angle…)
+2. **光线**：方向、质感、色温 (rim light, volumetric god rays, warm key light…)
+3. **色彩调性**：palette、color grading (monochromatic indigo, vibrant cel-shaded…)
+4. **天气与环境**：rain、fog、dappled sunlight、underwater…
+5. **氛围**：somber、airy、tense、ethereal…
+6. **多角色空间关系与动作**：谁在左边、谁在干什么、互动方式
+
+**关键禁忌**：
+- 不要在自然语言中重复标签已覆盖的内容（发型、瞳色、服装等）。
+- 不要写超过 3 段的自然语言——超过 2~3 段后画面结构会崩溃，手部最先出问题。
+- 自然语言中不要使用隐喻或情绪化修辞，应使用客观、具体、视觉化的描述。
+
+## 默认前缀与默认值
+
+**正向前缀**（无特殊要求时的默认值）：
+```
+masterpiece, best quality, score_7, safe,
+```
+
+**取景默认**：若用户未指定，默认近景人物、人物面向观众。若用户有描述则以用户描述为准。
+
+**模式默认**：采用 Hybrid 混合结构（标签 + 自然语言）。仅当用户明确要求纯标签或纯自然语言时才切换。
+
+## 权重语法
+
+Anima 支持 Prompt Weighting，但需要的权重值 **高于 SDXL**：
+
+- 正常强调：`(tag:2)` 起步
+- 强强调：`(tag:3)` 到 `(tag:5)`
+- 权重取值范围：2 ~ 5
+- 若用户提供 1.2 等较小权重，**必须放大至 2~5 区间**
+- 多角色区分性特征（如一个蓝发一个红发）使用权重：`(blue hair:1.3)`, `(red hair:1.3)`，Anima 的 Qwen 编码器支持但需要 1.3~2.0
+
+## Composition Tag 对抗自然语言漂移（关键规则）
+
+当 Hybrid 提示词中自然语言段落包含环境描述时，模型倾向于拉远镜头，忽略 `close-up`、`upper body`、`portrait` 等取景标签。必须采取以下对抗措施：
+
+1. **对取景标签使用强权重**：`(upper body:2)`, `(close-up:3)`
+2. **在自然语言首句中明确取景**：`The composition is a tight close-up portrait...`
+3. 如果仍然拉远，继续提高权重至 `(upper body:5)` 甚至 `(upper body:7)`
+
+## 多人物特征分离规则（Anima 最高风险项）
+
+Anima 在多人场景中极易发生特征混淆。必须严格遵守：
+
+1. **角色属性按角色分组排列**。同一角色的发型、瞳色、服装、体型连续出现后再切换。严禁交叉排列（如 `blue hair, red hair, short hair, long hair`）。
+
+2. **自然语言中为每个角色写一句"外观锚定短语"**。格式：`CharacterName with [key features]...` 明确指出视觉归属。这比仅靠标签的防串扰效果强得多。
+
+3. **使用空间方位词分离角色**：left/right/foreground/background。
+
+4. **为易混淆特征使用权重**：`(blue hair:2)`, `(red hair:2)`。
+
+5. **角色外观在标签块中充分描述**。官方文档明确指出：先命名角色，再描述其外观。仅列出角色名而不描述外观会让模型困惑。
+
+6. **自然语言中不重复标签内容**——自然语言补充空间关系、互动动作、光影氛围、构图取景。
+
+## 安全标签使用规则
+
+- 在提示 prefix 中始终包含安全分级标签（safe / sensitive / nsfw / explicit）。
+- 描绘现有角色时，**禁止使用 score_8、score_9 等过强标签**，以免过拟合导致角色特征丢失。使用 `score_7` 作为上限。
+
+## 中文解释撰写规则
+
+- 采用分点结构，每点对应一个设计决策。
+- 解释覆盖：为何选择当前提示词架构、关键标签的作用、自然语言各句的功能。
+- 多人物时**必须**解释角色分组策略。
+- 必须包含自然语言部分的完整中文翻译。
+- 语言中立、客观、技术化。不使用感叹号、表情符号或情绪化措辞。
+- 避免冗长背景介绍，只解释本次提示词中实际出现的元素。
+
+"""
+
+
+@mcp.tool()
+async def get_anima_format() -> str:
+    """
+    返回 Anima 文生图模型的 Hybrid 混合提示词格式规范。
+
+    当用户提到「Anima 提示词」「Anima 格式」「Anima Prompt」「Anima 模型」等关键词时，
+    应在搜索标签完成、最终输出前调用此工具，以获取完整的提示词组装规范。
+
+    ## 适用场景
+
+    - 用户明确要求输出 Anima 模型的提示词
+    - 用户提到 anima、Anima 等关键词
+    - 需要将标签转换为 Anima 的 Hybrid 混合格式
+
+    ## Returns
+
+    包含完整 Anima 提示词格式规范的 Markdown 文本，涵盖标签格式化规则、
+    自然语言段落规则、权重语法、多人物防串扰规则等。
+    """
+    return _ANIMA_FORMAT_INSTRUCTION

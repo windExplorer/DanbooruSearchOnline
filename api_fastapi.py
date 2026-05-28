@@ -26,7 +26,8 @@ FastAPI 适配层（可选）。
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+import asyncio
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from core.engine import DanbooruTagger
@@ -76,6 +77,8 @@ class RelatedTagOut(BaseModel):
     cooc_count: int
     cooc_score: float
     sources: list[str]
+    post_count: int = 0
+    wiki: str = ""
 
 
 class SearchOut(BaseModel):
@@ -104,7 +107,10 @@ async def search(body: SearchIn) -> SearchOut:
     request = SearchRequest(**body.model_dump())
 
     # 并发安全的异步 search（信号量串行化 + 线程池执行）
-    response: SearchResponse = await tagger.search_async(request)
+    try:
+        response: SearchResponse = await tagger.search_async(request)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="搜索超时（120s），请简化查询或稍后重试")
 
     # 计数：每次 API 搜索调用均计入搜索、成功、复制；访问不变
     await counter.increment()
@@ -149,6 +155,8 @@ async def related(body: RelatedIn) -> list[RelatedTagOut]:
             cooc_count=r.cooc_count,
             cooc_score=r.cooc_score,
             sources=r.sources,
+            post_count=r.post_count,
+            wiki=r.wiki,
         )
         for r in results
     ]
