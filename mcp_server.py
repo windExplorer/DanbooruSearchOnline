@@ -11,9 +11,10 @@ MCP 服务层
     https://sakizuki-danboorusearch.hf.space/mcp/mcp
 
 支持的工具：
-    search_tags       自然语言搜索标签
-    get_related_tags  基于共现表查关联推荐
-    get_anima_format  返回 Anima 模型 Hybrid 提示词格式规范
+    search_tags        自然语言搜索标签
+    get_related_tags   基于共现表查关联推荐
+    get_anima_format   返回 Anima 模型 Hybrid 提示词格式规范
+    get_newbie_format  返回 NewBie 模型 XML 提示词格式规范
 """
 
 import json
@@ -454,7 +455,7 @@ Anima 支持 Prompt Weighting，但需要的权重值 **高于 SDXL**：
 - 强强调：`(tag:3)` 到 `(tag:5)`
 - 权重取值范围：2 ~ 5
 - 若用户提供 1.2 等较小权重，**必须放大至 2~5 区间**
-- 多角色区分性特征（如一个蓝发一个红发）使用权重：`(blue hair:1.3)`, `(red hair:1.3)`，Anima 的 Qwen 编码器支持但需要 1.3~2.0
+- 多角色区分性特征（如一个蓝发一个红发）使用权重：`(blue hair:2)`, `(red hair:2)`
 
 ## Composition Tag 对抗自然语言漂移（关键规则）
 
@@ -517,3 +518,85 @@ async def get_anima_format() -> str:
     自然语言段落规则、权重语法、多人物防串扰规则等。
     """
     return _ANIMA_FORMAT_INSTRUCTION
+
+
+# ── NewBie 提示词格式说明 ─────────────────────────────────────────────────
+_NEWBIE_OUTPUT_FORMAT = """
+## 输出格式要求
+
+你的输出包括两部分：一个 XML 代码块和代码块外的中文翻译。
+
+### 标签处理规则
+- 标签内部的空格必须替换为下划线 `_`（如 `red eyes` → `red_eyes`）
+- 标签名内的括号必须用反斜杠转义（如 `momoko (momopoco)` → `momoko_\\(momopoco\\)`）
+- 权重括号（如 `(daito:1.2)`）保持原样，不转义
+- 括号内包含多个独立标签时，拆解为独立标签
+
+### XML 结构
+
+```xml
+<img>
+ <character_1>
+  <n>角色名</n>
+  <gender>性别标签 (如 1girl)</gender>
+  <appearance>外貌特征 (发色, 瞳色, 身体特征等)</appearance>
+  <clothing>衣着 (具体服饰)</clothing>
+  <expression>表情</expression>
+  <action>动作</action>
+  <position>位置</position>
+ </character_1>
+
+ <!-- 若有多个角色，按 character_2, character_3 顺延 -->
+
+ <general_tags>
+  <count>人数标签</count>
+  <style>画风标签（若用户未指定，默认 anime_style,realistic_shading）</style>
+  <background>背景标签</background>
+  <atmosphere>画面情绪、氛围标签</atmosphere>
+  <quality>very_aesthetic, masterpiece, no_text</quality>
+  <resolution>max_high_resolution</resolution>
+  <artist>画师标签</artist>
+  <objects>各种物品（包括武器、饰品等）</objects>
+  <other>其它标签</other>
+ </general_tags>
+
+ <caption>
+  将所有标签串联为一段流畅、详细的英文场景描述。包含光线、情绪、角色和背景。
+  不要在此处提及 style 或 quality 类词汇。
+ </caption>
+</img>
+```
+
+在 XML 代码块结束后，输出 `<caption>` 内容的中文翻译。
+
+### 多人物规则（防特征混淆）
+
+如果用户提到了多个人物，必须严格遵循以下规则：
+
+1. **角色分组**：每个 character_N 块内连续排列该角色的所有专属属性（发型、瞳色、服装、体型、表情、动作），然后再切换到下一角色。
+2. **外观标签充分**：每个角色至少 5 个角色特征标签。可使用 get_related_tags 获得更多特征。
+3. **属性不交叉**：禁止将不同角色的同类属性交叉排列。不同角色的特征混淆是多人场景最常见的失败模式。
+4. **空间锚定**：在 `<position>` 和 `<caption>` 中明确每个角色的空间位置（如"左侧"、"右侧"、"前景"等）。
+5. **caption 角色锚定**：在 `<caption>` 中为每个角色写一句外观锚定短语，使用"[角色名] with [关键特征]"的句式，明确指出视觉归属。
+"""
+
+
+@mcp.tool()
+async def get_newbie_format() -> str:
+    """
+    返回 NewBie 文生图模型的 XML 格式提示词规范。
+
+    当用户提到「NewBie 提示词」「NewBie 格式」「NewBie Prompt」「NewBie 模型」等关键词时，
+    应在搜索标签完成、最终输出前调用此工具，以获取完整的 XML 格式组装规范。
+
+    ## 适用场景
+
+    - 用户明确要求输出 NewBie 模型的提示词
+    - 用户提到 newbie、NewBie 等关键词
+    - 需要将标签转换为 NewBie 的 XML 格式
+
+    ## Returns
+
+    包含完整 NewBie 提示词格式规范的文本，涵盖 XML 结构、标签处理规则、多人物规则等。
+    """
+    return _NEWBIE_OUTPUT_FORMAT
