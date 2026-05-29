@@ -547,7 +547,7 @@ class DanbooruSearchUI:
         with self.mcp_notice:
             with ui.column().classes('px-4 py-3 w-full gap-2'):
                 with ui.row().classes('items-center justify-between w-full'):
-                    ui.label('🧪 新功能：标签组扩展（beta）').classes('text-sm font-bold text-green-800')
+                    ui.label('🧪 新功能：标签组扩展').classes('text-sm font-bold text-green-800')
                     ui.button(icon='close').props('flat dense round color=grey-6') \
                         .on_click(self._dismiss_mcp_notice)
                 ui.html(
