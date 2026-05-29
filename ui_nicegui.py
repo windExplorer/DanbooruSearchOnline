@@ -129,9 +129,14 @@ def apply_nsfw_filter(rows: list[dict], show_nsfw: bool) -> list[dict]:
 
 def _format_tag_with_weight(tag: str, weight: float, fmt: str = 'sdxl') -> str:
     """格式化单个标签。
-    sdxl: (tag:1.2)  权重 1.0 时输出 tag
-    nai:  1.2::tag:: 权重 1.0 时输出 tag
+    sdxl:  (tag:1.2)  权重 1.0 时输出 tag
+    nai:   1.2::tag:: 权重 1.0 时输出 tag
+    anima: (tag:1.5)  权重 1.0 时输出 tag，下划线替换为空格
+    所有模式均对标签名中的括号进行反斜杠转义。
     """
+    tag = tag.replace('(', '\\(').replace(')', '\\)')
+    if fmt == 'anima':
+        tag = tag.replace('_', ' ')
     if weight == 1.0:
         return tag
     if fmt == 'nai':
@@ -168,7 +173,7 @@ class DanbooruSearchUI:
 
         # tag -> prompt 权重，范围 [0.1, 1.9]，默认 1.0
         self.tag_weights: dict[str, float] = {}
-        # 复制格式：'sdxl' 或 'nai'
+        # 复制格式：'sdxl'、'nai' 或 'anima'
         self.prompt_format: str = 'sdxl'
         self.format_toggle_btn = None
 
@@ -358,12 +363,15 @@ class DanbooruSearchUI:
         if self.sw_source and 'sw_source' in cfg:
             self.sw_source.set_value(cfg['sw_source'])
 
-        if 'prompt_format' in cfg and cfg['prompt_format'] in ('sdxl', 'nai'):
+        if 'prompt_format' in cfg and cfg['prompt_format'] in ('sdxl', 'nai', 'anima'):
             self.prompt_format = cfg['prompt_format']
             if self.format_toggle_btn:
                 if self.prompt_format == 'nai':
                     self.format_toggle_btn.text = 'NAI'
                     self.format_toggle_btn.props('color=purple-7')
+                elif self.prompt_format == 'anima':
+                    self.format_toggle_btn.text = 'Anima'
+                    self.format_toggle_btn.props('color=teal-7')
                 else:
                     self.format_toggle_btn.text = 'SDXL'
                     self.format_toggle_btn.props('color=grey-7')
@@ -749,7 +757,8 @@ class DanbooruSearchUI:
                             ui.html(
                                 '切换复制格式：<br>'
                                 '<b>SDXL</b>：<code>(tag:1.2)</code><br>'
-                                '<b>NAI</b>：<code>1.2::tag::</code>'
+                                '<b>NAI</b>：<code>1.2::tag::</code><br>'
+                                '<b>Anima</b>：<code>(tag:1.5)</code> 下划线→空格'
                             ).style('font-size:13px;line-height:1.7;')
                     self.format_toggle_btn.on_click(self._toggle_prompt_format)
                     clear_btn = ui.button('清空已选', icon='delete_sweep').props('dense flat color=red-7').classes('text-xs')
@@ -773,6 +782,7 @@ class DanbooruSearchUI:
                 ui.label('暂无已选标签').classes('text-xs text-gray-400 italic p-2 self-center')
             return
         with self.selected_chips_container:
+            step = 0.5 if self.prompt_format == 'anima' else 0.1
             for tag in tags:
                 w = self.tag_weights.get(tag, 1.0)
                 extra_cls = 'boosted' if w > 1.0 else ('reduced' if w < 1.0 else '')
@@ -785,7 +795,7 @@ class DanbooruSearchUI:
                         ui.html('&times;')
                     # 减号
                     with ui.element('button').classes('weight-btn').on(
-                        'click', lambda t=tag: self._adjust_weight(t, -0.1)
+                        'click', lambda t=tag, s=step: self._adjust_weight(t, -s)
                     ):
                         ui.html('&minus;')
                     # 标签名
@@ -798,20 +808,29 @@ class DanbooruSearchUI:
                     if w != 1.0:
                         ui.label(w_str).classes('weight-label').style('color:#e65100;font-weight:bold;')
                     # 加号
-                    with ui.element('button').classes('weight-btn').on(
-                        'click', lambda t=tag: self._adjust_weight(t, +0.1)
-                    ):
+                    plus_btn = ui.element('button').classes('weight-btn').on(
+                        'click', lambda t=tag, s=step: self._adjust_weight(t, +s)
+                    )
+                    if self.prompt_format == 'anima':
+                        with plus_btn:
+                            with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                                ui.html('Anima模型所需要的权重数值较大').style('font-size:12px;')
+                    with plus_btn:
                         ui.html('&plus;')
 
     def _adjust_weight(self, tag: str, delta: float):
-        """调整单个标签权重，钳位到 [0.1, 1.9]。"""
+        """调整单个标签权重。Anima 模式范围 [0.5, 5.0]，其他模式 [0.1, 1.9]。"""
         current = self.tag_weights.get(tag, 1.0)
         new_w = round(current + delta, 1)
-        if new_w < 0.1:
-            ui.notify('权重范围为 0.1 ~ 1.9，已到达最小值', type='warning', timeout=2000)
+        if self.prompt_format == 'anima':
+            min_w, max_w = 0.5, 5.0
+        else:
+            min_w, max_w = 0.1, 1.9
+        if new_w < min_w:
+            ui.notify(f'权重范围为 {min_w} ~ {max_w}，已到达最小值', type='warning', timeout=2000)
             return
-        if new_w > 1.9:
-            ui.notify('权重范围为 0.1 ~ 1.9，已到达最大值', type='warning', timeout=2000)
+        if new_w > max_w:
+            ui.notify(f'权重范围为 {min_w} ~ {max_w}，已到达最大值', type='warning', timeout=2000)
             return
         self.tag_weights[tag] = new_w
         self._save_staged_tags()
@@ -1629,11 +1648,17 @@ class DanbooruSearchUI:
             if self.format_toggle_btn:
                 self.format_toggle_btn.text = 'NAI'
                 self.format_toggle_btn.props('color=purple-7')
+        elif self.prompt_format == 'nai':
+            self.prompt_format = 'anima'
+            if self.format_toggle_btn:
+                self.format_toggle_btn.text = 'Anima'
+                self.format_toggle_btn.props('color=teal-7')
         else:
             self.prompt_format = 'sdxl'
             if self.format_toggle_btn:
                 self.format_toggle_btn.text = 'SDXL'
                 self.format_toggle_btn.props('color=grey-7')
+        self._render_selected_chips()
 
     def copy_selection(self):
         self._mark_interaction()
@@ -1643,7 +1668,7 @@ class DanbooruSearchUI:
             for t in tags
         )
         ui.clipboard.write(prompt)
-        fmt_label = 'NAI' if self.prompt_format == 'nai' else 'SDXL'
+        fmt_label = {'sdxl': 'SDXL', 'nai': 'NAI', 'anima': 'Anima'}.get(self.prompt_format, 'SDXL')
         ui.notify(f'已复制选中标签（{fmt_label} 格式）!', type='positive')
 
         async def silent_copy_update():
@@ -1658,6 +1683,7 @@ class DanbooruSearchUI:
         show_nsfw_val = self.input_nsfw.value
         tags_str = self.full_tags_str if show_nsfw_val else self.full_tags_str_sfw
         if tags_str:
+            tags_str = tags_str.replace('(', '\\(').replace(')', '\\)')
             ui.clipboard.write(tags_str)
             ui.notify('已复制全部标签!', type='positive')
         else:
