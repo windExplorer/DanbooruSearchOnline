@@ -187,8 +187,9 @@ class DanbooruTagger:
         model_path: Optional[str] = None,
         csv_file:   str = 'origin_database/tags_enhanced.csv',
         cache_dir:  str = 'tags_embedding',
-        cooc_file:  str = 'origin_database/cooccurrence_clean.csv',
-        group_file: str = 'origin_database/tag_groups.json',
+        cooc_file:          str = 'origin_database/cooccurrence_clean.csv',
+        group_file:         str = 'origin_database/tag_groups.json',
+        tag_artist_file:    str = 'origin_database/tag_artist_cooc.parquet',
     ):
         # 模型路径：优先使用显式传入，否则交由 platform_utils 解析
         self.model_path = model_path or resolve_model_path()
@@ -198,6 +199,7 @@ class DanbooruTagger:
         self.paths     = _CachePaths(cache_dir)
         self.cooc_file = cooc_file
         self.group_file = group_file
+        self.tag_artist_file = tag_artist_file
 
         self.model:         Optional[SentenceTransformer]         = None
         self.df:            Optional[pd.DataFrame]                = None
@@ -211,6 +213,7 @@ class DanbooruTagger:
         self._tag_to_groups: dict[str, set[str]]                  = {}
         self._group_to_tags_idx: dict[str, np.ndarray]            = {}
         self._group_cn_names: dict[str, str]                      = {}
+        self._tag_artist_index: dict[str, list[tuple]]           = {}
         self.is_loaded:     bool                                  = False
 
         # 预提取的列数组，避免热点路径上反复执行 df.iloc[idx]
@@ -265,6 +268,7 @@ class DanbooruTagger:
 
         self._setup_jieba_from_memory()
         self._load_cooc()
+        self._load_tag_artist_cooc()
         self._name_to_idx = {n: i for i, n in enumerate(self.df['name'])}
         self._tag_names_set: set[str] = set(self._name_to_idx.keys())
         self._rebuild_arrays_from_df()
@@ -324,9 +328,10 @@ class DanbooruTagger:
                 print(f'[Engine] 拉取 {filename} 失败（非致命）: {e}')
                 return filename   # 回退到原始路径，让后续逻辑决定是否重建
 
-        self.csv_path  = pull('origin_database/tags_enhanced.csv')
-        self.cooc_file = pull('origin_database/cooccurrence_clean.parquet')
-        self.group_file = pull('origin_database/tag_groups.json')
+        self.csv_path         = pull('origin_database/tags_enhanced.csv')
+        self.cooc_file        = pull('origin_database/cooccurrence_clean.parquet')
+        self.group_file       = pull('origin_database/tag_groups.json')
+        self.tag_artist_file  = pull('origin_database/tag_artist_cooc.parquet')
 
         meta_path = pull('tags_embedding/tags_metadata.parquet')
         emb_path  = pull('tags_embedding/danbooru_multiview_embeddings.safetensors')
@@ -600,6 +605,36 @@ class DanbooruTagger:
         async with self._get_cpu_sem():
             return await asyncio.to_thread(
                 self.get_group_candidates, selected_tags, show_nsfw,
+            )
+
+    async def search_artists_by_tags_async(
+        self,
+        tags: list[str],
+        limit: int = 30,
+        min_cooc: int = 5,
+    ) -> list:
+        """search_artists_by_tags() 的并发安全异步封装。"""
+        async with self._get_cpu_sem():
+            return await asyncio.to_thread(
+                self.search_artists_by_tags, tags, limit, min_cooc,
+            )
+
+    async def search_artists_pipeline_async(
+        self,
+        query: str,
+        limit: int = 30,
+        min_cooc: int = 5,
+        target_layers: list[str] | None = None,
+        target_categories: list[str] | None = None,
+    ) -> tuple:
+        """search_artists_pipeline() 的并发安全异步封装。"""
+        async with self._get_cpu_sem():
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.search_artists_pipeline,
+                    query, limit, min_cooc, target_layers, target_categories,
+                ),
+                timeout=120.0,
             )
 
     def _apply_group_expand(self, final: dict[str, TagResult]) -> None:
@@ -1186,6 +1221,132 @@ class DanbooruTagger:
 
         return results
 
+    # ── 画师查找 ──────────────────────────────────────────────────────────
+
+    def search_artists_by_tags(
+        self,
+        tags: list[str],
+        limit: int = 30,
+        min_cooc: int = 5,
+    ) -> list:
+        """按标签查找画师：聚合多个标签的 NPMI 得分，返回排名靠前的画师。"""
+        from .models import ArtistResult
+
+        if not self._tag_artist_index or not tags:
+            return []
+
+        artist_scores: dict[str, float] = {}
+        artist_cooc: dict[str, int] = {}
+        artist_post_count: dict[str, int] = {}
+        artist_sources: dict[str, list[str]] = {}
+        artist_hits: dict[str, int] = {}
+
+        for tag in tags:
+            tag = tag.strip().lower()
+            if not tag or tag not in self._tag_artist_index:
+                continue
+            for artist, npmi, cooc, post_count in self._tag_artist_index[tag]:
+                if cooc < min_cooc:
+                    continue
+                artist_scores[artist] = artist_scores.get(artist, 0.0) + npmi
+                artist_cooc[artist] = artist_cooc.get(artist, 0) + cooc
+                artist_post_count[artist] = max(artist_post_count.get(artist, 0), post_count)
+                artist_sources.setdefault(artist, []).append(tag)
+                artist_hits[artist] = artist_hits.get(artist, 0) + 1
+
+        if not artist_scores:
+            return []
+
+        scored = []
+        for artist, raw_score in artist_scores.items():
+            hit_bonus = 1.0 + 0.3 * (artist_hits[artist] - 1)
+            final_score = raw_score * hit_bonus
+            scored.append((
+                artist, final_score, artist_cooc[artist],
+                artist_post_count[artist], artist_sources[artist],
+                artist_hits[artist],
+            ))
+
+        scored.sort(key=lambda x: -x[1])
+        results = []
+        for artist, score, cooc, post_count, sources, hits in scored[:limit]:
+            results.append(ArtistResult(
+                artist=artist,
+                score=round(score, 4),
+                cooc_count=cooc,
+                post_count=post_count,
+                sources=sources,
+                hit_count=hits,
+            ))
+        return results
+
+    def search_artists_pipeline(
+        self,
+        query: str,
+        limit: int = 30,
+        min_cooc: int = 5,
+        target_layers: list[str] | None = None,
+        target_categories: list[str] | None = None,
+    ) -> tuple[list, list[str], list[str], list[str]]:
+        """画师查找完整管线：自然语言 → 标签搜索 → 提取最佳标签 → 画师查询。
+
+        Returns:
+            (artist_results, seed_tags, found_tags, missing_tags)
+        """
+        if target_layers is None:
+            target_layers = ['英文', '中文扩展词', '释义', '中文核心词']
+        if target_categories is None:
+            target_categories = ['General', 'Character', 'Copyright']
+
+        # Step 1: 自然语言 → 标签搜索
+        tag_request = SearchRequest(
+            query=query,
+            top_k=10,
+            limit=80,
+            popularity_weight=0.15,
+            show_nsfw=True,
+            use_segmentation=True,
+            target_layers=target_layers,
+            target_categories=target_categories,
+        )
+        tag_response = self.search(tag_request)
+
+        if not tag_response.results:
+            return [], [], [], []
+
+        # Step 2: 按 source 分组，每组按分数降序取前 10 个候选，找到能命中画师的第一个
+        tag_artist = self._tag_artist_index
+        source_candidates: dict[str, list[str]] = {}
+        for r in tag_response.results:
+            if r.final_score < 0.45:
+                continue
+            source_candidates.setdefault(r.source, []).append(r.tag)
+
+        seed_tags: list[str] = []
+        seen = set()
+        for candidates in source_candidates.values():
+            for tag in candidates[:10]:
+                tag_lower = tag.strip().lower()
+                if tag_lower in tag_artist and tag_lower not in seen:
+                    seed_tags.append(tag_lower)
+                    seen.add(tag_lower)
+                    break
+
+        if not seed_tags:
+            return [], [], [], []
+
+        # Step 3: 标签 → 画师查找
+        artist_results = self.search_artists_by_tags(seed_tags, limit, min_cooc)
+
+        # 统计 found / missing（seed_tags 中哪些匹配到了画师）
+        matched = {s for r in artist_results for s in r.sources}
+        found_tags = [t for t in seed_tags if t in matched]
+        missing_tags = [t for t in seed_tags if t not in matched]
+
+        return artist_results, seed_tags, found_tags, missing_tags
+
+    # ── 共现数据加载 ──────────────────────────────────────────────────────
+
     def _load_cooc(self) -> None:
         csv_path     = Path(self.cooc_file)
         parquet_path = csv_path.with_suffix('.parquet')
@@ -1241,6 +1402,32 @@ class DanbooruTagger:
             )
         except Exception as e:
             print(f'[Engine] 共现表加载失败: {e}')
+
+    def _load_tag_artist_cooc(self) -> None:
+        """加载标签-画师共现数据（tag_artist_cooc.parquet）。"""
+        path = Path(self.tag_artist_file)
+        if not path.is_file():
+            print(f'[Engine] 未找到标签-画师共现表 ({self.tag_artist_file})，画师查找功能不可用。')
+            return
+
+        print(f'[Engine] 加载标签-画师共现表 ({path.name})...')
+        t0 = time.time()
+        try:
+            df = pd.read_parquet(str(path))
+            index: dict[str, list[tuple]] = {}
+            for _, row in df.iterrows():
+                tag = str(row["tag"])
+                index.setdefault(tag, []).append(
+                    (str(row["artist"]), float(row["npmi"]),
+                     int(row["cooc_count"]), int(row["artist_post_count"]))
+                )
+            self._tag_artist_index = index
+            print(
+                f'[Engine] 标签-画师共现表加载完成，{len(index):,} 个标签，'
+                f'耗时 {time.time() - t0:.2f}s'
+            )
+        except Exception as e:
+            print(f'[Engine] 标签-画师共现表加载失败: {e}')
 
     def _load_groups(self) -> None:
         """加载 Tag Group 数据，构建 tag→group 和 group→idx 索引。"""

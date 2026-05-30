@@ -35,6 +35,17 @@ class RelatedTag:
 
 
 @dataclass
+class ArtistResult:
+    """单条画师搜索结果。"""
+    artist: str           # 画师名
+    score: float          # 综合 NPMI 得分
+    cooc_count: int       # 累计共现次数
+    post_count: int       # 画师在 Danbooru 的作品数
+    sources: list[str]    # 命中标签列表
+    hit_count: int        # 命中标签数
+
+
+@dataclass
 class SearchRequest:
     """搜索参数"""
     query: str

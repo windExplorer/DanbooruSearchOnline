@@ -177,6 +177,12 @@ class DanbooruSearchUI:
         self.prompt_format: str = 'sdxl'
         self.format_toggle_btn = None
 
+        # 画师查找模式
+        self.artist_search_mode: bool = False
+        self.artist_search_btn = None
+        self.artist_results_container = None
+        self.current_artist_seed_tags: list[str] = []  # 本次画师搜索使用的种子标签
+
         self.init_banner = None
         self.input_top_k = None
         self.input_limit = None
@@ -292,6 +298,7 @@ class DanbooruSearchUI:
             'search_mode': self.input_search_mode.value if self.input_search_mode else '自定义',
             'group_mode': self.input_group_mode.value if self.input_group_mode else 'off',
             'max_per_group': int(self.input_max_per_group.value) if self.input_max_per_group else 2,
+            'artist_search_mode': self.artist_search_mode,
         }
         js = _json.dumps(cfg, ensure_ascii=False)
         ui.run_javascript(f"localStorage.setItem('{_CONFIG_LS_KEY}', {_json.dumps(js)});")
@@ -388,6 +395,10 @@ class DanbooruSearchUI:
         if self.mcp_notice and cfg.get('mcp_notice_dismissed'):
             self.mcp_notice.set_visibility(False)
 
+        # 恢复画师查找模式
+        if cfg.get('artist_search_mode'):
+            self._on_search_type_change(True)
+
         # 若高级选项列有变更，同步更新表格列
         self._update_table_columns()
 
@@ -456,6 +467,60 @@ class DanbooruSearchUI:
                         flex: 1 1 100% !important;
                         max-width: 100% !important;
                     }
+                }
+
+                /* 画师查找模式 — 暗色主题 */
+                body[data-search-mode="artist"] .artist-card-row {
+                    background: rgba(245, 158, 11, 0.06);
+                    border-color: rgba(245, 158, 11, 0.15);
+                }
+                .artist-card-row {
+                    transition: background-color 0.2s, border-color 0.2s;
+                }
+                .artist-card-row:hover {
+                    background: rgba(245, 158, 11, 0.12) !important;
+                }
+                .mode-toggle-btn {
+                    transition: all 0.25s ease;
+                }
+
+                /* 暗色模式下文字颜色覆盖 */
+                body[data-search-mode="artist"] .text-gray-800,
+                body[data-search-mode="artist"] .text-gray-700,
+                body[data-search-mode="artist"] .text-gray-600 {
+                    color: #cbd5e1 !important;
+                }
+                body[data-search-mode="artist"] .text-gray-500 {
+                    color: #94a3b8 !important;
+                }
+                body[data-search-mode="artist"] .text-gray-400 {
+                    color: #64748b !important;
+                }
+
+                /* 暗色模式下公告栏 / 注意事项卡片适配 */
+                body[data-search-mode="artist"] .bg-green-50 {
+                    background: rgba(16, 185, 129, 0.1) !important;
+                    border-color: rgba(16, 185, 129, 0.3) !important;
+                }
+                body[data-search-mode="artist"] .text-green-800,
+                body[data-search-mode="artist"] .text-green-900,
+                body[data-search-mode="artist"] .text-green-700 {
+                    color: #6ee7b7 !important;
+                }
+                body[data-search-mode="artist"] .bg-orange-50 {
+                    background: rgba(249, 115, 22, 0.1) !important;
+                    border-color: rgba(249, 115, 22, 0.3) !important;
+                }
+                body[data-search-mode="artist"] .text-orange-800 {
+                    color: #fdba74 !important;
+                }
+                body[data-search-mode="artist"] .bg-blue-50 {
+                    background: rgba(59, 130, 246, 0.1) !important;
+                    border-color: rgba(59, 130, 246, 0.3) !important;
+                }
+                body[data-search-mode="artist"] .text-blue-700,
+                body[data-search-mode="artist"] .text-blue-600 {
+                    color: #93c5fd !important;
                 }
             </style>
             <script async src="https://www.googletagmanager.com/gtag/js?id=G-QPB7EEPR5G"></script>
@@ -530,7 +595,11 @@ class DanbooruSearchUI:
                 # ── 4. 分词筛选 chips ──
                 self.keywords_container = ui.row().classes('gap-2 items-center flex-wrap')
 
-                # ── 5. 两栏结果 ──
+                # ── 5. 画师结果容器（画师模式专用）──
+                self.artist_results_container = ui.column().classes('w-full gap-3')
+                self.artist_results_container.set_visibility(False)
+
+                # ── 6. 两栏结果（标签模式）──
                 self._build_results_columns()
 
             # ── 6. 底部 ──
@@ -538,7 +607,7 @@ class DanbooruSearchUI:
                 self.search_count_label = ui.html('正在加载数据...').classes('text-xs text-gray-400')
                 self._update_footer_text()
 
-    # ── MCP 上线通知 ──────────────────────────────────────────────────────
+    # ── 公告栏（画师查找 + 标签组 + MCP）───────────────────────────────────
 
     def _build_group_notice(self):
         self.mcp_notice = ui.card().classes(
@@ -546,18 +615,26 @@ class DanbooruSearchUI:
         )
         with self.mcp_notice:
             with ui.column().classes('px-4 py-3 w-full gap-2'):
+                # ── 画师查找公告 ──
                 with ui.row().classes('items-center justify-between w-full'):
-                    ui.label('🧪 新功能：标签组扩展').classes('text-sm font-bold text-green-800')
+                    with ui.row().classes('items-center gap-1'):
+                        ui.label('🧪 新功能：画师查找（beta）').classes('text-sm font-bold text-green-800')
                     ui.button(icon='close').props('flat dense round color=grey-6') \
                         .on_click(self._dismiss_mcp_notice)
                 ui.html(
-                    '勾选标签后，搜索结果下方会出现<b>同类标签</b>区域，'
-                    '展示已选标签所属分组中的其他标签。<b>勾选复选框</b>即可加入已选，'
-                    '选中的标签会加入已选列表，可直接复制为 Prompt。'
+                    '基于标签共现数据，输入风格描述即可查找对应画师。'
+                    '点击搜索栏上方的 <b>「画师查找（beta）」</b> 按钮即可切换模式。'
                 ).classes('text-xs text-green-900')
                 ui.separator().classes('my-1')
+                # ── 标签组扩展 ──
                 ui.html(
-                    '【MCP 服务已上线】 支持通过 MCP 协议接入 AI Agent（如 Claude Desktop）。'
+                    '【标签组扩展】 勾选标签后，搜索结果下方会出现<b>同类标签</b>区域，'
+                    '展示已选标签所属分组中的其他标签，勾选即可加入已选。'
+                ).classes('text-xs text-green-900')
+                ui.separator().classes('my-1')
+                # ── MCP 服务 ──
+                ui.html(
+                    '【MCP 服务】 支持通过 MCP 协议接入 AI Agent（如 Claude Desktop）。'
                     '免配置托管版体验：'
                     '<a href="https://huggingface.co/spaces/SAkizuki/WenQiuYue" '
                     'target="_blank" rel="noopener noreferrer" '
@@ -604,12 +681,20 @@ class DanbooruSearchUI:
 
     def _build_search_card(self):
         with ui.card().classes('w-full'):
+            # ── 模式切换按钮 ──
+            with ui.row().classes('w-full items-center justify-between mb-3'):
+                with ui.row().classes('items-center gap-0'):
+                    self.tag_mode_btn = ui.button('标签搜索', on_click=lambda: self._on_search_type_change(False)) \
+                        .props('unelevated color=primary').classes('mode-toggle-btn rounded-r-none')
+                    self.artist_mode_btn = ui.button('画师查找（beta）', on_click=lambda: self._on_search_type_change(True)) \
+                        .props('flat color=grey-6').classes('mode-toggle-btn rounded-l-none')
+
             with ui.row().classes('items-center gap-2 mb-2'):
                 ui.icon('search', size='2em', color='primary')
-                ui.label('Danbooru 标签模糊搜索').classes('text-2xl font-bold text-gray-800')
-            ui.label('基于语义匹配的标签搜索引擎，支持多维匹配与共现关联推荐。').classes(
-                'text-sm text-gray-500 -mt-1 mb-3'
-            )
+                self.search_title_label = ui.label('Danbooru 标签模糊搜索').classes('text-2xl font-bold text-gray-800')
+            self.search_subtitle_label = ui.label(
+                '基于语义匹配的标签搜索引擎，支持多维匹配与共现关联推荐。'
+            ).classes('text-sm text-gray-500 -mt-1 mb-3')
 
             with ui.row().classes('w-full gap-3 items-stretch'):
                 self.search_input = ui.textarea(
@@ -625,7 +710,8 @@ class DanbooruSearchUI:
                         ui.label('搜索').classes('text-sm mt-1')
                     self.spinner = ui.spinner(size='2em').classes('hidden')
 
-            with ui.row().classes('w-full gap-6 items-center mt-3 flex-wrap'):
+            self.search_params_row = ui.row().classes('w-full gap-6 items-center mt-3 flex-wrap')
+            with self.search_params_row:
                 with ui.row().classes('items-center gap-2'):
                     ui.label('搜索模式 (beta)').classes('text-sm text-gray-600')
                     self.input_search_mode = ui.select(
@@ -670,7 +756,8 @@ class DanbooruSearchUI:
                 self.input_segment = _seg_sw
                 self.input_segment.on('update:model-value', self._on_param_changed)
 
-            with ui.expansion('高级选项', icon='tune').classes('w-full mt-2'):
+            self.advanced_options = ui.expansion('高级选项', icon='tune').classes('w-full mt-2')
+            with self.advanced_options:
                 with ui.column().classes('w-full p-3 gap-4'):
                     with ui.row().classes('w-full gap-8 flex-wrap'):
                         with ui.column().classes('gap-2'):
@@ -711,7 +798,7 @@ class DanbooruSearchUI:
                             self.sw_source.on('update:model-value', self._update_table_columns)
 
                         with ui.column().classes('gap-2'):
-                            ui.label('标签分组模式 (beta)').classes('font-bold text-sm text-gray-700')
+                            ui.label('标签分组模式').classes('font-bold text-sm text-gray-700')
                             self.input_group_mode = ui.select(
                                 ['off', 'expand', 'diverse'], value='off',
                             ).classes('w-40').props('outlined dense')
@@ -728,7 +815,8 @@ class DanbooruSearchUI:
     # ── 已选标签栏 ────────────────────────────────────────────────────────
 
     def _build_selection_bar(self):
-        with ui.card().classes('w-full bg-blue-50 border border-blue-200'):
+        self.selection_bar_card = ui.card().classes('w-full bg-blue-50 border border-blue-200')
+        with self.selection_bar_card:
             with ui.row().classes('w-full items-center justify-between'):
                 with ui.row().classes('items-center gap-2'):
                     ui.icon('check_circle', color='primary')
@@ -912,7 +1000,8 @@ class DanbooruSearchUI:
         # ── 两栏结果（CSS 强制并排）──────────────────────────────────────────
 
     def _build_results_columns(self):
-        with ui.element('div').classes('w-full two-col-layout'):
+        self.two_col_container = ui.element('div').classes('w-full two-col-layout')
+        with self.two_col_container:
             # ── 左栏：语义匹配结果（表格）──
             with ui.card().classes('col-left'):
                 with ui.row().classes('items-center justify-between mb-2 w-full'):
@@ -997,7 +1086,7 @@ class DanbooruSearchUI:
                 ui.separator().classes('my-2')
                 with ui.row().classes('items-center justify-between w-full mb-1'):
                     with ui.row().classes('items-center gap-2'):
-                        ui.label('同类标签 (beta)').classes('font-bold text-sm text-gray-600')
+                        ui.label('同类标签').classes('font-bold text-sm text-gray-600')
                         with ui.icon('info_outline', size='xs', color='grey').classes('cursor-help'):
                             with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
                                 ui.label('基于标签分组数据，展示已选标签所属分组中的其他标签。勾选可加入已选。').style('font-size:14px;')
@@ -1025,6 +1114,73 @@ class DanbooruSearchUI:
                 self.related_list_container = ui.column().classes('w-full gap-0')
                 with self.related_list_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 渲染画师搜索结果
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def _silent_increment_counter(self):
+        try:
+            await counter.increment()
+            self._update_footer_text()
+        except Exception:
+            pass
+
+    def _render_artist_results(self, artist_results, found_tags, missing_tags):
+        if self.artist_results_container is None:
+            return
+        self.artist_results_container.clear()
+
+        if not artist_results:
+            with self.artist_results_container:
+                with ui.card().classes('w-full bg-amber-50 border border-amber-200'):
+                    with ui.row().classes('items-center gap-2 p-4'):
+                        ui.icon('info', color='amber')
+                        ui.label('未找到匹配的画师，请尝试更具体的风格描述。').classes('text-sm text-amber-700')
+            return
+
+        max_score = max(r.score for r in artist_results) if artist_results else 1.0
+
+        with self.artist_results_container:
+            # 种子标签信息
+            if found_tags:
+                tags_display = ', '.join(found_tags)
+                ui.label(f'种子标签: {tags_display}').classes('text-sm text-gray-500 mb-1')
+            if missing_tags:
+                ui.label(f'未匹配画师的标签: {", ".join(missing_tags)}').classes('text-xs text-orange-400')
+
+            with ui.card().classes('w-full p-0'):
+                for i, r in enumerate(artist_results):
+                    pct = min(r.score / max_score * 100, 100) if max_score > 0 else 0
+                    rank = i + 1
+                    sources_str = ', '.join(r.sources[:5])
+                    post_str = f'{r.post_count:,}' if r.post_count else '—'
+
+                    with ui.row().classes(
+                        'w-full items-center gap-3 px-4 py-3 border-b border-gray-200 artist-card-row'
+                    ).style('border-bottom: 1px solid rgba(128,128,128,0.1);'):
+                        # 排名
+                        ui.label(f'#{rank}').classes(
+                            'text-lg font-bold min-w-[42px] text-center'
+                        ).style(f'color: {"#F59E0B" if rank <= 3 else "#9CA3AF"};')
+
+                        # 画师信息
+                        with ui.column().classes('flex-grow gap-0 min-w-0'):
+                            ui.link(r.artist, f'https://danbooru.donmai.us/posts?tags={r.artist}', new_tab=True) \
+                                .classes('text-base font-bold')
+                            with ui.row().classes('items-center gap-4 mt-1'):
+                                ui.label(f'匹配标签: {sources_str}').classes('text-xs text-gray-500')
+                                ui.label(f'Danbooru 作品: {post_str}').classes('text-xs text-gray-400')
+
+                        # 分数条
+                        with ui.column().classes('items-end gap-0 min-w-[80px]'):
+                            ui.label(f'{r.score:.4f}').classes('text-sm font-mono font-bold')
+                            with ui.element('div').classes('w-full h-2 rounded-full overflow-hidden') \
+                                    .style('background: rgba(128,128,128,0.15);'):
+                                ui.element('div').classes('h-full rounded-full').style(
+                                    f'width: {pct:.0f}%;'
+                                    f'background: #F59E0B;'
+                                )
 
     # ══════════════════════════════════════════════════════════════════════
     # 渲染关联推荐列表
@@ -1167,6 +1323,52 @@ class DanbooruSearchUI:
                     chip_color, text_color = 'grey-4', 'black'
                 child.props(f'color={chip_color} text-color={text_color}')
 
+    # ── 搜索模式切换 ──────────────────────────────────────────────────────
+
+    def _on_search_type_change(self, artist_mode: bool):
+        if artist_mode == self.artist_search_mode:
+            return
+        self.artist_search_mode = artist_mode
+
+        if artist_mode:
+            # 画师查找 → 暗色主题
+            ui.colors(primary='#F59E0B', secondary='#78716C', accent='#10B981')
+            ui.dark_mode().enable()
+            self.tag_mode_btn.props('flat color=grey-6')
+            self.artist_mode_btn.props('unelevated color=primary')
+            self.search_title_label.set_text('画师查找')
+            self.search_subtitle_label.set_text('输入任何元素（如"平涂" "枪" "蔚蓝档案"），自动匹配擅长的画师。')
+            self.search_input.props('placeholder="输入任何元素，如：平涂 枪 蔚蓝档案..."')
+            # 隐藏搜索参数控件
+            self.search_params_row.set_visibility(False)
+            self.advanced_options.set_visibility(False)
+            # 清空旧结果并隐藏标签搜索专属区域
+            if self.results_section:
+                self.results_section.set_visibility(False)
+            if self.artist_results_container:
+                self.artist_results_container.clear()
+        else:
+            # 标签搜索 → 亮色主题
+            ui.colors(primary='#4A90E2', secondary='#5E6C84', accent='#FF6B6B')
+            ui.dark_mode().disable()
+            self.tag_mode_btn.props('unelevated color=primary')
+            self.artist_mode_btn.props('flat color=grey-6')
+            self.search_title_label.set_text('Danbooru 标签模糊搜索')
+            self.search_subtitle_label.set_text('基于语义匹配的标签搜索引擎，支持多维匹配与共现关联推荐。')
+            self.search_input.props('placeholder="输入自然语言描述或模糊概念，例如：一个穿着白色水手服的少女在雨中奔跑..."')
+            # 恢复搜索参数控件
+            self.search_params_row.set_visibility(True)
+            self.advanced_options.set_visibility(True)
+            # 清空旧结果
+            if self.results_section:
+                self.results_section.set_visibility(False)
+            if self.artist_results_container:
+                self.artist_results_container.clear()
+            self.keywords_container.clear()
+
+        ui.run_javascript(f"document.body.setAttribute('data-search-mode', '{'artist' if artist_mode else 'tag'}');")
+        self._save_config()
+
     # ── 搜索 ──────────────────────────────────────────────────────────────
 
     async def perform_search(self):
@@ -1209,97 +1411,134 @@ class DanbooruSearchUI:
         try:
             tagger = await DanbooruTagger.get_instance()
 
-            # NSFW 保护模式：开 = 不显示 NSFW
-            show_nsfw_val = self.input_nsfw.value
+            if self.artist_search_mode:
+                # ── 画师查找模式 ──
+                artist_results, seed_tags, found_tags, missing_tags = \
+                    await tagger.search_artists_pipeline_async(
+                        query,
+                        limit=30,
+                        target_layers=target_layers_list,
+                        target_categories=target_cats_list,
+                    )
 
-            request = SearchRequest(
-                query=query,
-                top_k=int(self.input_top_k.value),
-                limit=int(self.input_limit.value),
-                popularity_weight=float(self.input_weight.value),
-                show_nsfw=show_nsfw_val,
-                use_segmentation=self.input_segment.value if self.input_segment else True,
-                target_layers=target_layers_list,
-                target_categories=target_cats_list,
-                group_mode=self.input_group_mode.value if self.input_group_mode else 'off',
-                max_per_group=int(self.input_max_per_group.value) if self.input_max_per_group else 2,
-            )
-            response = await tagger.search_async(request)
+                # 后台计数
+                asyncio.create_task(self._silent_increment_counter())
 
-            # 后台计数
-            async def silent_counter_update():
-                try:
-                    await counter.increment()
-                    if response.keywords:
-                        await counter.add_keywords(response.keywords)
-                    self._update_footer_text()
-                except Exception as e:
-                    print(f"[UI] 后台静默更新计数失败: {e}", flush=True)
-            asyncio.create_task(silent_counter_update())
+                if not self._client_alive():
+                    return
 
-            if not self._client_alive():
-                return
+                self.current_artist_seed_tags = seed_tags
+                self.results_section.set_visibility(True)
+                # 隐藏标签搜索专属区域
+                self.selection_bar_card.set_visibility(False)
+                self.two_col_container.set_visibility(False)
+                # 显示画师结果
+                self.artist_results_container.set_visibility(True)
 
-            table_data = [result_to_row(r, show_nsfw_val) for r in response.results]
-            self.full_table_data = table_data
-            self.full_tags_str = response.tags_all
-            self.full_tags_str_sfw = response.tags_sfw
-            self.current_segments = list(response.segments) if response.segments else []
+                self.keywords_container.clear()
+                with self.keywords_container:
+                    ui.label('匹配种子标签:').classes('text-sm text-gray-500 font-bold mr-2')
+                    for tag in seed_tags:
+                        ui.chip(tag).props('color=amber-2 text-color=amber-9 clickable')
+                    if not seed_tags:
+                        ui.label('无').classes('text-xs text-gray-400 italic')
 
-            # 显示结果区域
-            self.results_section.set_visibility(True)
+                self._render_artist_results(artist_results, found_tags, missing_tags)
+                ui.notify(f'找到 {len(artist_results)} 位画师', type='positive')
+                self.current_search_interacted = False
 
-            _saved_rpp = self._get_rows_per_page()
-            self.result_table.rows = apply_nsfw_filter(table_data, show_nsfw_val)
-            self._set_rows_per_page(_saved_rpp)
-            # 搜索时保留已选标签（跨搜索积累）
-            all_selected = self._get_selected_tags()
-            self.chip_extra_selected.clear()
-            self.chip_extra_selected.update(all_selected)
-            self.result_table.selected = []
-            self._render_selected_chips()
-            self._update_selection_display(None)
-            self._save_staged_tags()
+            else:
+                # ── 标签搜索模式 ──
+                show_nsfw_val = self.input_nsfw.value
 
-            # 清空关联推荐
-            self._refresh_related([], show_nsfw_val)
+                request = SearchRequest(
+                    query=query,
+                    top_k=int(self.input_top_k.value),
+                    limit=int(self.input_limit.value),
+                    popularity_weight=float(self.input_weight.value),
+                    show_nsfw=show_nsfw_val,
+                    use_segmentation=self.input_segment.value if self.input_segment else True,
+                    target_layers=target_layers_list,
+                    target_categories=target_cats_list,
+                    group_mode=self.input_group_mode.value if self.input_group_mode else 'off',
+                    max_per_group=int(self.input_max_per_group.value) if self.input_max_per_group else 2,
+                )
+                response = await tagger.search_async(request)
 
-            # 分词筛选 chips
-            self.current_filter_keyword = 'ALL'   # 新搜索默认选中"全部"
-            self.keywords_container.clear()
-            cached_set = set(response.cached_queries) if response.cached_queries else set()
-            with self.keywords_container:
-                ui.label('分词筛选:').classes('text-sm text-gray-500 font-bold mr-2')
-                ui.chip('全部', on_click=lambda: self._filter_by_source('ALL')) \
-                    .props('color=primary text-color=white clickable')
-                use_seg = self.input_segment.value if self.input_segment else True
-                if use_seg:
-                    whole = ui.chip('整句',
-                            on_click=lambda: self._filter_by_source(self.current_query_str))
-                    whole.props('color=grey-4 text-color=black clickable')
-                    if self.current_query_str in cached_set:
-                        whole.style('outline: 1px dashed rgba(128,128,128,0.3); outline-offset: 1px;')
-                    # 从句级原始片段（分隔符切分后未 jieba 的长片段，区别于关键词）
-                    for seg in response.segments:
-                        sc = ui.chip(seg,
-                                on_click=lambda s=seg: self._filter_by_source(s))
-                        sc.props('color=blue-1 text-color=blue-8 clickable')
-                        if seg in cached_set:
-                            sc.style('outline: 1px dashed rgba(128,128,128,0.3); outline-offset: 1px;')
-                    for kw in response.keywords:
-                        kc = ui.chip(kw,
-                                on_click=lambda k=kw: self._filter_by_source(k))
-                        kc.props('color=grey-4 text-color=black clickable')
-                        if kw in cached_set:
-                            kc.style('outline: 1px dashed rgba(128,128,128,0.3); outline-offset: 1px;')
-                else:
-                    ui.label('(分词已关闭)').classes('text-xs text-gray-400')
+                # 后台计数
+                async def silent_counter_update():
+                    try:
+                        await counter.increment()
+                        if response.keywords:
+                            await counter.add_keywords(response.keywords)
+                        self._update_footer_text()
+                    except Exception as e:
+                        print(f"[UI] 后台静默更新计数失败: {e}", flush=True)
+                asyncio.create_task(silent_counter_update())
 
-            ui.notify(f'找到 {len(table_data)} 个标签', type='positive')
-            self.current_search_interacted = False
+                if not self._client_alive():
+                    return
 
-            if self.bad_case_btn is not None:
-                self.bad_case_btn.enable()
+                table_data = [result_to_row(r, show_nsfw_val) for r in response.results]
+                self.full_table_data = table_data
+                self.full_tags_str = response.tags_all
+                self.full_tags_str_sfw = response.tags_sfw
+                self.current_segments = list(response.segments) if response.segments else []
+
+                self.results_section.set_visibility(True)
+                # 显示标签搜索专属区域
+                self.selection_bar_card.set_visibility(True)
+                self.two_col_container.set_visibility(True)
+                self.artist_results_container.set_visibility(False)
+
+                _saved_rpp = self._get_rows_per_page()
+                self.result_table.rows = apply_nsfw_filter(table_data, show_nsfw_val)
+                self._set_rows_per_page(_saved_rpp)
+                all_selected = self._get_selected_tags()
+                self.chip_extra_selected.clear()
+                self.chip_extra_selected.update(all_selected)
+                self.result_table.selected = []
+                self._render_selected_chips()
+                self._update_selection_display(None)
+                self._save_staged_tags()
+
+                self._refresh_related([], show_nsfw_val)
+
+                # 分词筛选 chips
+                self.current_filter_keyword = 'ALL'
+                self.keywords_container.clear()
+                cached_set = set(response.cached_queries) if response.cached_queries else set()
+                with self.keywords_container:
+                    ui.label('分词筛选:').classes('text-sm text-gray-500 font-bold mr-2')
+                    ui.chip('全部', on_click=lambda: self._filter_by_source('ALL')) \
+                        .props('color=primary text-color=white clickable')
+                    use_seg = self.input_segment.value if self.input_segment else True
+                    if use_seg:
+                        whole = ui.chip('整句',
+                                on_click=lambda: self._filter_by_source(self.current_query_str))
+                        whole.props('color=grey-4 text-color=black clickable')
+                        if self.current_query_str in cached_set:
+                            whole.style('outline: 1px dashed rgba(128,128,128,0.3); outline-offset: 1px;')
+                        for seg in response.segments:
+                            sc = ui.chip(seg,
+                                    on_click=lambda s=seg: self._filter_by_source(s))
+                            sc.props('color=blue-1 text-color=blue-8 clickable')
+                            if seg in cached_set:
+                                sc.style('outline: 1px dashed rgba(128,128,128,0.3); outline-offset: 1px;')
+                        for kw in response.keywords:
+                            kc = ui.chip(kw,
+                                    on_click=lambda k=kw: self._filter_by_source(k))
+                            kc.props('color=grey-4 text-color=black clickable')
+                            if kw in cached_set:
+                                kc.style('outline: 1px dashed rgba(128,128,128,0.3); outline-offset: 1px;')
+                    else:
+                        ui.label('(分词已关闭)').classes('text-xs text-gray-400')
+
+                ui.notify(f'找到 {len(table_data)} 个标签', type='positive')
+                self.current_search_interacted = False
+
+                if self.bad_case_btn is not None:
+                    self.bad_case_btn.enable()
 
         except RuntimeError as e:
             if 'deleted' in str(e).lower() or 'client' in str(e).lower():
