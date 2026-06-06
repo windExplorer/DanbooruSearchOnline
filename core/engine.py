@@ -568,7 +568,7 @@ class DanbooruTagger:
     @classmethod
     def _get_cpu_sem(cls) -> asyncio.Semaphore:
         if cls._cpu_sem is None:
-            cls._cpu_sem = asyncio.Semaphore(1)
+            cls._cpu_sem = asyncio.Semaphore(2)
         return cls._cpu_sem
 
     async def search_async(self, request: SearchRequest) -> SearchResponse:
