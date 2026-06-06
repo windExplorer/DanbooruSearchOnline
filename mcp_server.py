@@ -329,6 +329,119 @@ JSON array sorted by aggregated NPMI score (descending). Each result:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+@mcp.tool()
+async def get_artist_recommendations(
+    tags: list[str],
+    limit: int = 30,
+    min_cooc: int = 3,
+    show_nsfw: bool = True,
+) -> str:
+    """
+    Recommend artists who are skilled at drawing the given tags, based on NPMI co-occurrence data.
+
+    Given a list of Danbooru tags (e.g. character names, clothing, styles), this tool returns
+    artists whose works frequently co-occur with those tags on Danbooru, ranked by aggregated
+    NPMI score.
+
+    ## Args
+    - tags: List of canonical Danbooru tag names (underscores, no spaces).
+            e.g. ["1girl", "blue_hair", "school_uniform"]
+    - limit: Max artists returned. Default 30.
+    - min_cooc: Minimum co-occurrence count per (tag, artist) pair to consider. Default 3.
+    - show_nsfw: Include NSFW artist data. Default True.
+
+    ## Returns
+
+    JSON array sorted by NPMI score (descending). Each result:
+    - artist: Danbooru artist tag name
+    - score: Aggregated NPMI score (higher = stronger association)
+    - cooc_count: Total co-occurrence count across all input tags
+    - post_count: Artist's total post count on Danbooru
+    - sources: Input tags that matched this artist
+    - hit_count: Number of input tags that matched
+    """
+    tagger = await DanbooruTagger.get_instance()
+
+    if not tags:
+        return json.dumps({"error": "tags 列表不能为空"}, ensure_ascii=False, indent=2)
+
+    # ── 检查标签是否存在，不存在则尝试 search_tags 纠错 ──────────────────
+    valid_tags = []
+    invalid_tags = []
+    for t in tags:
+        if t in tagger._name_to_idx:
+            valid_tags.append(t)
+        else:
+            invalid_tags.append(t)
+
+    corrections = {}
+    if invalid_tags:
+        for bad_tag in invalid_tags:
+            try:
+                req = SearchRequest(
+                    query=bad_tag,
+                    top_k=5,
+                    limit=5,
+                    popularity_weight=0.15,
+                    use_segmentation=False,
+                    target_layers=['英文']
+                )
+                resp = await tagger.search_async(req)
+                if resp.results:
+                    corrections[bad_tag] = resp.results[0].tag
+            except Exception:
+                pass
+
+    if not valid_tags and not corrections:
+        return json.dumps({
+            "error": "所有传入的标签均不存在于标签表中",
+            "invalid_tags": invalid_tags,
+        }, ensure_ascii=False, indent=2)
+
+    # 用纠错后的标签替换无效标签
+    corrected_tags = []
+    for t in tags:
+        if t in valid_tags:
+            corrected_tags.append(t)
+        elif t in corrections:
+            corrected_tags.append(corrections[t])
+
+    results = await tagger.search_artists_by_tags_async(
+        corrected_tags, limit=limit, min_cooc=min_cooc,
+    )
+
+    output = []
+    for r in results:
+        item = {
+            "artist":     r.artist,
+            "score":      round(r.score, 4),
+            "cooc_count": r.cooc_count,
+            "post_count": r.post_count,
+            "sources":    r.sources,
+            "hit_count":  r.hit_count,
+        }
+        output.append(item)
+
+    # 计数
+    await counter.increment()
+    await counter.increment_success()
+    await counter.increment_copy()
+    await counter.increment_mcp()
+
+    payload = {"results": output}
+    if corrections:
+        correction_notes = [
+            f"{bad} → {good}" for bad, good in corrections.items()
+        ]
+        payload = {
+            "correction_note": "标签拼写错误，已经纠错: " + ", ".join(correction_notes),
+            "corrections": corrections,
+            "results": output,
+        }
+
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
 # ── Anima 提示词格式说明 ─────────────────────────────────────────────────
 _ANIMA_FORMAT_INSTRUCTION = """请严格按以下 Anima 混合提示词（Hybrid Prompt）规范，基于提供的标签和用户描述，输出最终结果。
 

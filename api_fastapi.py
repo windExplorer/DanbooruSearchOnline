@@ -88,6 +88,21 @@ class SearchOut(BaseModel):
     keywords: list[str]
 
 
+class ArtistIn(BaseModel):
+    tags: list[str]
+    limit: int = Field(30, ge=1, le=100)
+    min_cooc: int = Field(3, ge=1, le=100)
+
+
+class ArtistOut(BaseModel):
+    artist: str
+    score: float
+    cooc_count: int
+    post_count: int
+    sources: list[str]
+    hit_count: int
+
+
 # ── FastAPI 子应用（挂载到 NiceGUI 的 /api 路径下）──
 # lifespan / 预热由 ui_nicegui.py 的 @app.on_startup 统一管理，此处不重复。
 app = FastAPI(
@@ -157,6 +172,37 @@ async def related(body: RelatedIn) -> list[RelatedTagOut]:
             sources=r.sources,
             post_count=r.post_count,
             wiki=r.wiki,
+        )
+        for r in results
+    ]
+
+
+@app.post("/artists", response_model=list[ArtistOut])
+async def artists(body: ArtistIn) -> list[ArtistOut]:
+    """
+    给定标签列表，推荐擅长绘制这些标签的画师（基于 NPMI 共现数据）。
+
+    - tags：种子标签列表（Danbooru 英文标签名）
+    - limit：最多返回条数，默认 30
+    - min_cooc：单个 (tag, artist) 对的最小共现次数，默认 3
+    """
+    tagger = await DanbooruTagger.get_instance()
+    results = await tagger.search_artists_by_tags_async(
+        body.tags, limit=body.limit, min_cooc=body.min_cooc,
+    )
+    # 计数
+    await counter.increment()
+    await counter.increment_success()
+    await counter.increment_copy()
+
+    return [
+        ArtistOut(
+            artist=r.artist,
+            score=round(r.score, 4),
+            cooc_count=r.cooc_count,
+            post_count=r.post_count,
+            sources=r.sources,
+            hit_count=r.hit_count,
         )
         for r in results
     ]
