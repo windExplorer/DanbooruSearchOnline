@@ -170,6 +170,7 @@ class DanbooruSearchUI:
         # 去抖任务句柄（取消旧任务避免 CPU 洪峰）
         self._debounce_related_task = None  # type: asyncio.Task | None
         self._debounce_group_task = None    # type: asyncio.Task | None
+        self._debounce_artist_task = None   # type: asyncio.Task | None
 
         # tag -> prompt 权重，范围 [0.1, 1.9]，默认 1.0
         self.tag_weights: dict[str, float] = {}
@@ -775,7 +776,7 @@ class DanbooruSearchUI:
 
                         with ui.column().classes('gap-2'):
                             ui.label('类型筛选').classes('font-bold text-sm text-gray-700')
-                            color_map = {'General': 'blue', 'Copyright': 'pink', 'Character': 'green'}
+                            color_map = {'General': 'blue', 'Copyright': 'purple', 'Character': 'green'}
                             label_map = {
                                 'General': '通用 (General)',
                                 'Copyright': '作品 (Copyright)',
@@ -989,6 +990,7 @@ class DanbooruSearchUI:
             self.selection_count_label.text = '0'
         show_nsfw_val = self.input_nsfw.value
         self._refresh_related([], show_nsfw_val)
+        self._render_artist_rec([], {})
         # 清空 Group 同类扩展
         if self.group_expansion_container is not None:
             self.group_expansion_container.clear()
@@ -1028,7 +1030,7 @@ class DanbooruSearchUI:
                               'background-color':
                                   props.row.category === 'General'   ? 'rgba(59,130,246,0.06)' :
                                   props.row.category === 'Character' ? 'rgba(34,197,94,0.06)'  :
-                                  props.row.category === 'Copyright' ? 'rgba(236,72,153,0.06)' : ''
+                                  props.row.category === 'Copyright' ? 'rgba(168,85,247,0.06)' : ''
                           }">
                         <q-td auto-width>
                             <q-checkbox v-model="props.selected"
@@ -1096,8 +1098,25 @@ class DanbooruSearchUI:
                 with self.group_expansion_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
-            # ── 右栏：关联推荐 ──
+            # ── 右栏：推荐画师 + 关联推荐 ──
             with ui.card().classes('col-right'):
+                # 推荐画师
+                with ui.row().classes('items-center justify-between w-full mb-2'):
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('推荐擅长画师').classes('font-bold text-lg text-gray-800')
+                        with ui.icon('info_outline', size='sm', color='grey').classes('cursor-help'):
+                            with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                                ui.html(
+                                    '基于标签-画师 NPMI 共现数据，根据您当前已选的标签，推荐擅长这些元素的画师。<br>悬停画师行可查看与该画师共现关联最强的标签。').style(
+                                    'font-size:14px;line-height:1.5;')
+
+                self.artist_rec_list = ui.column().classes('w-full gap-0').style('max-height: 420px; overflow-y: auto;')
+                with self.artist_rec_list:
+                    ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
+
+                ui.separator().classes('my-3')
+
+                # 关联推荐
                 with ui.row().classes('items-center justify-between w-full mb-2'):
                     with ui.row().classes('items-center gap-2'):
                         ui.label('关联推荐').classes('font-bold text-lg text-gray-800')
@@ -1236,7 +1255,7 @@ class DanbooruSearchUI:
                 CAT_BG = {
                     'General':   'background-color: rgba(59,130,246,0.06);',   # 淡蓝
                     'Character': 'background-color: rgba(34,197,94,0.06);',    # 淡绿
-                    'Copyright': 'background-color: rgba(236,72,153,0.06);',   # 淡红/粉
+                    'Copyright': 'background-color: rgba(168,85,247,0.06);',   # 淡紫
                 }
                 row_bg = CAT_BG.get(r.category, '')
 
@@ -1592,6 +1611,7 @@ class DanbooruSearchUI:
             show_nsfw_val = self.input_nsfw.value
             self._refresh_related_from_selection(all_tags, show_nsfw_val)
             self._refresh_group_from_selection(all_tags, show_nsfw_val)
+            self._refresh_artist_from_selection(all_tags, show_nsfw_val)
             if not all_tags:
                 self.chip_extra_selected.clear()
 
@@ -1617,6 +1637,7 @@ class DanbooruSearchUI:
         show_nsfw_val = self.input_nsfw.value
         self._refresh_related_from_selection(all_tags, show_nsfw_val)
         self._refresh_group_from_selection(all_tags, show_nsfw_val)
+        self._refresh_artist_from_selection(all_tags, show_nsfw_val)
         if not all_tags:
             self.chip_extra_selected.clear()
         self._save_staged_tags()
@@ -1653,9 +1674,10 @@ class DanbooruSearchUI:
                 self.tag_weights.pop(tag, None)
                 self._set_selected_tags(current, skip_refresh=True)
                 ui.notify(f'已移除 {tag}', type='warning', timeout=1500)
-        # 即刻刷新关联推荐
+        # 即刻刷新关联推荐 + 画师推荐
         show_nsfw_val = self.input_nsfw.value
         self._refresh_related_from_selection(current, show_nsfw_val)
+        self._refresh_artist_from_selection(current, show_nsfw_val)
 
     def _manual_refresh_related(self):
         """手动触发关联推荐列表的刷新"""
@@ -1665,6 +1687,7 @@ class DanbooruSearchUI:
 
         if all_tags:
             self._refresh_related_from_selection(all_tags, show_nsfw_val)
+            self._refresh_artist_from_selection(all_tags, show_nsfw_val)
             ui.notify('已触发关联推荐更新', type='info', timeout=1500)
         else:
             self.chip_extra_selected.clear()
@@ -1742,6 +1765,91 @@ class DanbooruSearchUI:
             self._render_group_expansion(group_data, selected_tags, show_nsfw)
         self._debounce_group_task = asyncio.ensure_future(_do())
 
+    def _refresh_artist_from_selection(self, selected_tags: list[str], show_nsfw: bool = True):
+        """根据已选标签刷新画师推荐（300ms 去抖）。"""
+        if self._debounce_artist_task and not self._debounce_artist_task.done():
+            self._debounce_artist_task.cancel()
+        async def _do():
+            await asyncio.sleep(0.3)
+            if len(selected_tags) < 1:
+                self._render_artist_rec([], {}, show_nsfw)
+                return
+            tagger = await DanbooruTagger.get_instance()
+            artist_results = await tagger.search_artists_by_tags_async(
+                selected_tags, limit=15, min_cooc=3,
+            )
+            top_tags = {}
+            if artist_results:
+                names = [r.artist for r in artist_results[:10]]
+                top_tags = tagger.get_artist_top_tags(names, show_nsfw=show_nsfw)
+            self._render_artist_rec(artist_results, top_tags, show_nsfw)
+        self._debounce_artist_task = asyncio.ensure_future(_do())
+
+    def _render_artist_rec(self, artist_results, top_tags=None, show_nsfw: bool = True):
+        """渲染推荐画师列表。"""
+        if self.artist_rec_list is None:
+            return
+        self.artist_rec_list.clear()
+
+        if not artist_results:
+            with self.artist_rec_list:
+                ui.label('暂无推荐画师').classes('text-sm text-gray-400 italic p-4')
+            return
+
+        import math
+        top_tags = top_tags or {}
+        scores = [r.score for r in artist_results if not math.isnan(r.score)]
+        max_score = max(scores) if scores and max(scores) > 0 else 1.0
+
+        with self.artist_rec_list:
+            for i, r in enumerate(artist_results[:10]):
+                pct = min(r.score / max_score * 100, 100) if max_score > 0 else 0
+                rank = i + 1
+                sources_str = ', '.join(r.sources[:3])
+                post_str = f'{r.post_count:,}' if r.post_count else '—'
+                rank_color = '#e11d48' if rank <= 3 else '#9ca3af'
+
+                # 构建 tooltip HTML
+                tag_list = top_tags.get(r.artist, [])
+                tooltip_html = f'<div>'
+                tooltip_html += f'<b>{r.artist}</b><br>'
+                tooltip_html += f'这位画师经常画:<br>'
+                if tag_list:
+                    for t in tag_list[:10]:
+                        tooltip_html += f'  · {t}<br>'
+                else:
+                    tooltip_html += '  (无数据)'
+                tooltip_html += '</div>'
+
+                with ui.row().classes(
+                    'w-full items-center gap-2 px-2 py-2 related-item border-b border-gray-100'
+                ).style('background: rgba(244,114,182,0.04);'):
+                    with ui.tooltip().props('content-class="bg-black text-white shadow-4" max-width="400px"'):
+                        ui.html(tooltip_html).style('font-size:14px;line-height:1.5;max-width:380px;')
+
+                    # 排名
+                    ui.label(f'#{rank}').classes('text-sm font-bold min-w-[28px] text-center') \
+                        .style(f'color: {rank_color};')
+
+                    # 画师名 + 信息
+                    with ui.column().classes('flex-grow gap-0 min-w-0'):
+                        ui.link(
+                            r.artist,
+                            f'https://danbooru.donmai.us/posts?tags={r.artist}',
+                            new_tab=True,
+                        ).classes('text-xs font-bold')
+                        ui.label(f'{sources_str} · 作品 {post_str}').classes('text-xs text-gray-500')
+
+                    # 分数条
+                    with ui.column().classes('items-end gap-0 min-w-[56px]'):
+                        ui.label(f'{r.score:.4f}').classes('text-xs font-mono')
+                        with ui.element('div').classes('w-full h-1.5 rounded-full overflow-hidden') \
+                                .style('background: rgba(128,128,128,0.12);'):
+                            ui.element('div').classes('h-full rounded-full').style(
+                                f'width: {pct:.1f}%;'
+                                f'background: #e11d48;'
+                            )
+
     def _render_group_expansion(self, group_data: list, selected_tags: list[str], show_nsfw: bool):
         """渲染 Group 同类扩展区域。"""
         if self.group_expansion_container is None:
@@ -1758,7 +1866,7 @@ class DanbooruSearchUI:
         CAT_BG = {
             'General':   'background-color: rgba(59,130,246,0.06);',
             'Character': 'background-color: rgba(34,197,94,0.06);',
-            'Copyright': 'background-color: rgba(236,72,153,0.06);',
+            'Copyright': 'background-color: rgba(168,85,247,0.06);',
         }
         CAT_LABEL = {'General': '通用', 'Character': '角色', 'Copyright': '作品'}
 

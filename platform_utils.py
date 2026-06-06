@@ -294,7 +294,7 @@ def download_file(
 
 #  模型路径解析 
 
-LOCAL_MODEL_PATH = 'my_model_bge_m3'
+LOCAL_MODEL_PATH = 'D:/LLMs/BAAI/bge-m3'
 HF_MODEL_ID      = 'BAAI/bge-m3'
 MS_MODEL_ID      = 'BAAI/bge-m3'   # 魔搭上同名，走国内节点
 

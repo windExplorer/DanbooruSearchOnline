@@ -214,6 +214,7 @@ class DanbooruTagger:
         self._group_to_tags_idx: dict[str, np.ndarray]            = {}
         self._group_cn_names: dict[str, str]                      = {}
         self._tag_artist_index: dict[str, list[tuple]]           = {}
+        self._artist_top_tags: dict[str, list[tuple]]            = {}  # artist → [(tag, npmi, cn_short), ...]
         self.is_loaded:     bool                                  = False
 
         # 预提取的列数组，避免热点路径上反复执行 df.iloc[idx]
@@ -1280,6 +1281,37 @@ class DanbooruTagger:
             ))
         return results
 
+    def get_artist_top_tags(self, artist_names: list[str], top_n: int = 10,
+                            show_nsfw: bool = True) -> dict[str, list[str]]:
+        """获取画师的 top-N 共现标签（含中文简称）。
+
+        Returns:
+            {artist: [f"{tag} ({cn_short})", ...]}
+        """
+        result: dict[str, list[str]] = {}
+        for artist in artist_names:
+            entries = self._artist_top_tags.get(artist, [])
+            items: list[str] = []
+            for tag, npmi, cooc in entries:
+                if len(items) >= top_n:
+                    break
+                # NSFW 过滤
+                if not show_nsfw and self._name_to_idx is not None and tag in self._name_to_idx:
+                    idx = self._name_to_idx[tag]
+                    if self._arr_nsfw is not None and self._arr_nsfw[idx] == '1':
+                        continue
+                cn_short = ""
+                if self._name_to_idx is not None and tag in self._name_to_idx:
+                    idx = self._name_to_idx[tag]
+                    cn_full = str(self._arr_cn_name[idx]) if self._arr_cn_name is not None else ""
+                    cn_short = cn_full.split(',')[0].strip() if cn_full else ""
+                display = f"{tag}"
+                if cn_short:
+                    display += f" ({cn_short})"
+                items.append(display)
+            result[artist] = items
+        return result
+
     def search_artists_pipeline(
         self,
         query: str,
@@ -1413,18 +1445,66 @@ class DanbooruTagger:
         print(f'[Engine] 加载标签-画师共现表 ({path.name})...')
         t0 = time.time()
         try:
+            import math
             df = pd.read_parquet(str(path))
+
+            # 预计算语料库总大小和 tag → post_count 映射
+            total_posts = float(max(self.df['post_count'].max(), 7_000_000))
+            tag_post_count = dict(zip(self.df['name'], self.df['post_count']))
+
             index: dict[str, list[tuple]] = {}
+            skipped = 0
             for _, row in df.iterrows():
                 tag = str(row["tag"])
+                artist = str(row["artist"])
+                cooc = int(row["cooc_count"])
+                artist_pc = int(row["artist_post_count"])
+
+                # 获取标签的 post_count
+                tag_pc = tag_post_count.get(tag)
+                if tag_pc is None or tag_pc <= 0:
+                    skipped += 1
+                    continue
+
+                # 即时计算 NPMI（与 get_related 相同算法）
+                cooc_capped = min(float(cooc), float(tag_pc), float(artist_pc))
+                if cooc_capped <= 0:
+                    skipped += 1
+                    continue
+
+                numerator = (cooc_capped * total_posts) / (float(tag_pc) * float(artist_pc))
+                if numerator <= 1.0:
+                    skipped += 1
+                    continue
+
+                pmi = math.log(numerator)
+                p_ab = cooc_capped / total_posts
+                if p_ab >= 1.0:
+                    npmi_val = 1.0
+                else:
+                    npmi_val = pmi / -math.log(p_ab)
+
+                if math.isnan(npmi_val):
+                    skipped += 1
+                    continue
+
                 index.setdefault(tag, []).append(
-                    (str(row["artist"]), float(row["npmi"]),
-                     int(row["cooc_count"]), int(row["artist_post_count"]))
-                )
+                    (artist, npmi_val, cooc, artist_pc))
+
             self._tag_artist_index = index
+
+            # 构建反向索引：artist → top tags（按 NPMI 降序）
+            artist_tags: dict[str, list[tuple]] = {}
+            for tag, entries in index.items():
+                for artist, npmi, cooc, _ in entries:
+                    artist_tags.setdefault(artist, []).append((tag, npmi, cooc))
+            for artist, entries in artist_tags.items():
+                entries.sort(key=lambda x: -x[1])
+            self._artist_top_tags = artist_tags
+
             print(
                 f'[Engine] 标签-画师共现表加载完成，{len(index):,} 个标签，'
-                f'耗时 {time.time() - t0:.2f}s'
+                f'跳过 {skipped:,} 行，耗时 {time.time() - t0:.2f}s'
             )
         except Exception as e:
             print(f'[Engine] 标签-画师共现表加载失败: {e}')
