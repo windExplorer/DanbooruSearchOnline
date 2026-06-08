@@ -466,6 +466,8 @@ npm install -g mcp-remote
 | `min_cooc` | `3` | 单个 (tag, artist) 对的最小共现次数 |
 | `show_nsfw` | `true` | 是否包含 NSFW 数据 |
 
+返回字段：`artist`（画师名）、`cooc_count`（共现次数）、`post_count`（作品数）、`sources`（命中标签）、`top_tags`（该画师最常画的 10 个标签，含中文名）
+
 ### 调用示例
 
 接入后，你可以直接用自然语言告诉 AI 你的需求，AI 会自动选择合适的参数调用工具：

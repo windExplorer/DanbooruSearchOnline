@@ -121,7 +121,7 @@ CAT_MAP: dict[str, str] = {
     '0': 'General', '1': 'Artist', '3': 'Copyright', '4': 'Character', '5': 'Meta',
 }
 
-SCHEMA_VERSION = 3   # 升级此值将自动触发全量重建，用于破坏性格式变更
+SCHEMA_VERSION = 4   # 升级此值将自动触发全量重建，用于破坏性格式变更
 
 # 用户显式分隔后，纯 CJK 片段超过此长度仍用 jieba 切分（避免长句被当作原子概念）
 _ATOMIC_CJK_MAX_LEN = 7
@@ -690,7 +690,10 @@ class DanbooruTagger:
     def _encode_all_and_save(self) -> None:
         print('[Engine] 全量编码...')
         for _, attr, col in _LAYER_SPEC:
-            setattr(self, attr, self._encode_texts(self.df[col].tolist()))
+            texts = self.df[col].tolist()
+            if col == 'name':  # 英文层：编码时将下划线替换为空格
+                texts = [t.replace('_', ' ') for t in texts]
+            setattr(self, attr, self._encode_texts(texts))
         self._save_cache()
 
     # ── 增量更新 ──────────────────────────────────────────────────────────
@@ -734,7 +737,12 @@ class DanbooruTagger:
 
         if changed_names:
             changed_rows = new_df[new_df['name'].isin(set(changed_names))].reset_index(drop=True)
-            _vecs = {attr: self._encode_texts(changed_rows[col].tolist()) for _, attr, col in _LAYER_SPEC}
+            _vecs = {}
+            for _, attr, col in _LAYER_SPEC:
+                texts = changed_rows[col].tolist()
+                if col == 'name':  # 英文层：编码时将下划线替换为空格
+                    texts = [t.replace('_', ' ') for t in texts]
+                _vecs[attr] = self._encode_texts(texts)
             for j, name in enumerate(changed_rows['name']):
                 ci = cached_idx[name]
                 for _, attr, _ in _LAYER_SPEC:
@@ -745,7 +753,10 @@ class DanbooruTagger:
         if added_names:
             added_rows = new_df[new_df['name'].isin(set(added_names))].reset_index(drop=True)
             for _, attr, col in _LAYER_SPEC:
-                vecs = self._encode_texts(added_rows[col].tolist())
+                texts = added_rows[col].tolist()
+                if col == 'name':  # 英文层：编码时将下划线替换为空格
+                    texts = [t.replace('_', ' ') for t in texts]
+                vecs = self._encode_texts(texts)
                 setattr(self, attr, torch.cat([getattr(self, attr), vecs], dim=0))
             self.df = pd.concat([self.df, added_rows], ignore_index=True)
 
