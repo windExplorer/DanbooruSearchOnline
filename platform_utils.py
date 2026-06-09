@@ -51,6 +51,7 @@ platform_utils.py
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,25 +99,46 @@ def nsfw_allowed() -> bool:
 
 #  阿里云 OSS 
 
+# 进程级 OSS Bucket 单例：复用同一个 requests.Session 与连接池，
+# 避免每次计数器自增都构造新的 Bucket / HTTPAdapter 造成堆碎片。
+# 配置（OSS_*）在进程生命周期内固定，不支持运行中变更。
+_oss_bucket_singleton = None
+_oss_bucket_initialized = False
+_oss_bucket_lock = threading.Lock()
+
+
 def _get_oss_bucket():
     """
-    从环境变量读取 OSS 配置，返回 oss2.Bucket 对象。
-    若环境变量不完整或 oss2 未安装则返回 None。
+    返回模块级单例 oss2.Bucket。首次调用时按环境变量构造，之后所有
+    调用复用同一个 Bucket（含其内部 HTTP Session 与连接池）。
+    若环境变量不完整或 oss2 未安装则返回 None（同样会被缓存）。
     """
-    ak  = os.environ.get('OSS_ACCESS_KEY_ID')
-    sk  = os.environ.get('OSS_ACCESS_KEY_SECRET')
-    ep  = os.environ.get('OSS_ENDPOINT')
-    bkt = os.environ.get('OSS_BUCKET_NAME')
-    if not all([ak, sk, ep, bkt]):
-        return None
-    try:
-        import oss2
-        auth = oss2.Auth(ak, sk)
-        endpoint = ep if ep.startswith('http') else f'https://{ep}'
-        return oss2.Bucket(auth, endpoint, bkt)
-    except ImportError:
-        print('[PlatformUtils] oss2 未安装，OSS 计数器不可用。请 pip install oss2。')
-        return None
+    global _oss_bucket_singleton, _oss_bucket_initialized
+    if _oss_bucket_initialized:
+        return _oss_bucket_singleton
+
+    with _oss_bucket_lock:
+        # double-checked locking：另一线程可能已在锁外完成初始化
+        if _oss_bucket_initialized:
+            return _oss_bucket_singleton
+
+        ak  = os.environ.get('OSS_ACCESS_KEY_ID')
+        sk  = os.environ.get('OSS_ACCESS_KEY_SECRET')
+        ep  = os.environ.get('OSS_ENDPOINT')
+        bkt = os.environ.get('OSS_BUCKET_NAME')
+        if not all([ak, sk, ep, bkt]):
+            _oss_bucket_initialized = True
+            return None
+        try:
+            import oss2
+            auth = oss2.Auth(ak, sk)
+            endpoint = ep if ep.startswith('http') else f'https://{ep}'
+            _oss_bucket_singleton = oss2.Bucket(auth, endpoint, bkt)
+        except ImportError:
+            print('[PlatformUtils] oss2 未安装，OSS 计数器不可用。请 pip install oss2。')
+            _oss_bucket_singleton = None
+        _oss_bucket_initialized = True
+        return _oss_bucket_singleton
 
 
 def _oss_key(filename: str) -> str:
