@@ -5,7 +5,6 @@ __pychahce__
 my_model*/
 *.ignore
 tags_embedding/
-origin_database/
 .idea/
 *ignore*.py
 *.sh
