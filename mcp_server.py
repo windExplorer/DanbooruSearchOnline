@@ -616,7 +616,7 @@ prompt 内部分三层组装，同一语义不跨层重复：
 ## 标签格式化规则
 
 - 所有标签小写，下划线 `_` 替换为空格。**唯一例外**：`score_1` 到 `score_9` 保持下划线。
-- 标签内括号用反斜杠转义：`momoko (momopoco)` → `momoko \(momopoco\)`
+- 标签内括号用反斜杠转义：`momoko (momopoco)` → `momoko \\(momopoco\\)`
 - 画师标签前面加一个 `@` 符号
 - 标签间用一个逗号加一个空格连接：`tag a, tag b, tag c`
 - 不要编造不存在的标签。若不确定某标签是否存在，将该概念放入空间叙事层。
@@ -811,7 +811,7 @@ _NEWBIE_OUTPUT_FORMAT = """
 ## 标签处理规则
 
 - 标签内部的空格必须替换为下划线 `_`（如 `red eyes` → `red_eyes`）
-- 标签名内的括号必须用反斜杠转义（如 `momoko (momopoco)` → `momoko_\(\momopoco\)`）
+- 标签名内的括号必须用反斜杠转义（如 `momoko (momopoco)` → `momoko_\\(momopoco\\)`）
 - 权重括号（如 `(daito:1.2)`）保持原样，不转义
 - 括号内包含多个独立标签时，拆解为独立标签
 
