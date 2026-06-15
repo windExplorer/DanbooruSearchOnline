@@ -10,6 +10,9 @@
       "tag_group:artistic_license",
       "tag_group:dogs"
     ],
+    "pokefication": [
+      "tag_group:artistic_license"
+    ],
     "ponification": [
       "tag_group:artistic_license"
     ],
@@ -2992,6 +2995,9 @@
       "tag_group:prints",
       "tag_group:attire"
     ],
+    "dazzle_paint": [
+      "tag_group:prints"
+    ],
     "honeycomb_(pattern)": [
       "tag_group:prints"
     ],
@@ -4878,6 +4884,9 @@
     "mongolian_text": [
       "tag_group:text"
     ],
+    "nahuatl_text": [
+      "tag_group:text"
+    ],
     "namekian_language": [
       "tag_group:text"
     ],
@@ -4985,6 +4994,9 @@
       "tag_group:text"
     ],
     "faux_japanese": [
+      "tag_group:text"
+    ],
+    "grawlix": [
       "tag_group:text"
     ],
     "mixed-language_text": [
@@ -7515,6 +7527,9 @@
       "tag_group:eyes_tags"
     ],
     "blank_eyes": [
+      "tag_group:eyes_tags"
+    ],
+    "solid_eyes": [
       "tag_group:eyes_tags"
     ],
     "bloodshot_eyes": [
@@ -15948,6 +15963,9 @@
     "shinora": [
       "tag_group:fashion_style"
     ],
+    "subcul_jirai": [
+      "tag_group:fashion_style"
+    ],
     "visual_kei": [
       "tag_group:fashion_style"
     ],
@@ -17514,7 +17532,7 @@
     "ear_sex": [
       "tag_group:sex_acts"
     ],
-    "penis_in_eye": [
+    "eye_sex": [
       "tag_group:sex_acts"
     ],
     "tentacle_sex": [
@@ -18389,13 +18407,13 @@
       "tag_group:sexual_positions",
       "tag_group:bdsm_and_torture"
     ],
-    "separated_arms": [
+    "arms_bound_apart": [
       "tag_group:sexual_positions"
     ],
-    "separated_legs": [
+    "legs_bound_apart": [
       "tag_group:sexual_positions"
     ],
-    "separated_wrists": [
+    "wrists_bound_apart": [
       "tag_group:sexual_positions"
     ],
     "shrimp_tie": [
@@ -19920,7 +19938,7 @@
     "holding_another's_tail": [
       "tag_group:holding_tags"
     ],
-    "holding_another's_tongue": [
+    "grabbing_another's_tongue": [
       "tag_group:holding_tags"
     ],
     "holding_another's_wrist": [
@@ -21298,9 +21316,6 @@
     "butt_plug": [
       "tag_group:sex_objects"
     ],
-    "aneros": [
-      "tag_group:sex_objects"
-    ],
     "jewel_butt_plug": [
       "tag_group:sex_objects"
     ],
@@ -21347,6 +21362,9 @@
       "tag_group:sex_objects"
     ],
     "prostate_massager": [
+      "tag_group:sex_objects"
+    ],
+    "aneros": [
       "tag_group:sex_objects"
     ],
     "clitoris_pump": [
@@ -21419,6 +21437,9 @@
       "tag_group:sex_objects"
     ],
     "vibrator_on_penis": [
+      "tag_group:sex_objects"
+    ],
+    "wartenberg_wheel": [
       "tag_group:sex_objects"
     ],
     "chain": [
@@ -32009,6 +32030,9 @@
     "karl_marx": [
       "tag_group:people"
     ],
+    "martin_ludwig_bormann": [
+      "tag_group:people"
+    ],
     "otto_von_bismarck": [
       "tag_group:people"
     ],
@@ -32076,6 +32100,9 @@
       "tag_group:people"
     ],
     "abe_shinzou": [
+      "tag_group:people"
+    ],
+    "takaichi_sanae": [
       "tag_group:people"
     ],
     "tokugawa_ieyasu_(real_life)": [
@@ -41958,10 +41985,10 @@
     "virtua_fighter": [
       "tag_group:fighting_games"
     ],
-    "virtua_fighter_5": [
+    "virtua_fighter_5_(series)": [
       "tag_group:fighting_games"
     ],
-    "virtua_fighter_5:_final_showdown": [
+    "virtua_fighter_crossroads": [
       "tag_group:fighting_games"
     ],
     "capcom_vs._snk": [
@@ -45721,6 +45748,7 @@
       "alternate_species",
       "splatoonification",
       "animalization",
+      "pokefication",
       "ponification",
       "foodification",
       "furrification",
@@ -46694,6 +46722,7 @@
       "argyle",
       "asa_no_ha_(pattern)",
       "camouflage",
+      "dazzle_paint",
       "checkered",
       "honeycomb_(pattern)",
       "houndstooth",
@@ -47392,6 +47421,7 @@
       "matoran_language",
       "melnics",
       "mongolian_text",
+      "nahuatl_text",
       "namekian_language",
       "nepali_text",
       "sheikah_alphabet",
@@ -47430,6 +47460,7 @@
       "faux_egyptian",
       "faux_greek",
       "faux_japanese",
+      "grawlix",
       "mixed-language_text",
       "bilingual_text",
       "multilingual_text"
@@ -48234,6 +48265,7 @@
       "blue_sclera",
       "black_sclera",
       "blank_eyes",
+      "solid_eyes",
       "bloodshot_eyes",
       "green_sclera",
       "mismatched_sclera",
@@ -51401,6 +51433,7 @@
       "mori_kei",
       "ouji_fashion",
       "shinora",
+      "subcul_jirai",
       "tenshi_kaiwai",
       "visual_kei",
       "yami_kawaii",
@@ -52036,7 +52069,7 @@
       "sex_from_behind",
       "skull_fucking",
       "ear_sex",
-      "penis_in_eye",
+      "eye_sex",
       "tentacle_sex",
       "underwater_sex",
       "vaginal",
@@ -52356,9 +52389,9 @@
       "reverse_prayer",
       "frogtie",
       "hogtie",
-      "separated_arms",
-      "separated_legs",
-      "separated_wrists",
+      "arms_bound_apart",
+      "legs_bound_apart",
+      "wrists_bound_apart",
       "shrimp_tie",
       "strappado",
       "suspension",
@@ -52933,7 +52966,7 @@
       "holding_another's_foot",
       "holding_another's_hair",
       "holding_another's_tail",
-      "holding_another's_tongue",
+      "grabbing_another's_tongue",
       "holding_another's_wrist",
       "holding_hands",
       "holding_own_ankle",
@@ -53427,7 +53460,6 @@
       "ass_onahole",
       "tenga",
       "butt_plug",
-      "aneros",
       "jewel_butt_plug",
       "cock_ring",
       "dildo",
@@ -53445,6 +53477,7 @@
       "dildo_riding",
       "food_insertion",
       "prostate_massager",
+      "aneros",
       "breast_pump",
       "clitoris_pump",
       "penis_pump",
@@ -53473,6 +53506,7 @@
       "vibrator_in_anus",
       "vibrator_on_nipple",
       "vibrator_on_penis",
+      "wartenberg_wheel",
       "bdsm",
       "anal_hook",
       "blindfold",
@@ -57123,6 +57157,7 @@
       "hermann_wilhelm_goering",
       "joseph_goebbels",
       "karl_marx",
+      "martin_ludwig_bormann",
       "otto_von_bismarck",
       "mahatma_gandhi",
       "jawaharlal_nehru",
@@ -57146,6 +57181,7 @@
       "ozawa_ichirou",
       "sakamoto_ryouma",
       "abe_shinzou",
+      "takaichi_sanae",
       "tokugawa_ieyasu_(real_life)",
       "toyotomi_hideyoshi_(real_life)",
       "suga_yoshihide",
@@ -60918,8 +60954,8 @@
       "vanguard_princess",
       "variable_geo",
       "virtua_fighter",
-      "virtua_fighter_5",
-      "virtua_fighter_5:_final_showdown",
+      "virtua_fighter_5_(series)",
+      "virtua_fighter_crossroads",
       "capcom_vs._snk",
       "capcom_vs._snk_2",
       "marvel_super_heroes_vs._street_fighter",

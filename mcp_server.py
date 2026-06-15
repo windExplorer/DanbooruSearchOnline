@@ -121,7 +121,7 @@ Chain freely: search_tags → get_related_tags → get_related_tags → search_t
 ## Returns
 
 JSON with: prompt (comma-separated tags), keywords, results.
-Each result: tag, cn_name, category, final_score, count[, wiki if include_wiki=True].
+Each result: tag, cn_name[, wiki if include_wiki=True].
     """
     _SEARCH_MODE_PRESETS: dict[str, dict] = {
         "precise_lookup":   {"top_k": 10, "limit": 10, "popularity_weight": 0.15, "use_segmentation": False, "group_mode": "off",    "max_per_group": 2},
@@ -173,9 +173,6 @@ Each result: tag, cn_name, category, final_score, count[, wiki if include_wiki=T
         item = {
             "tag":         r.tag,
             "cn_name":     r.cn_name,
-            "category":    r.category,
-            "final_score": r.final_score,
-            "count":       r.count,
         }
         if include_wiki:
             item["wiki"] = r.wiki
@@ -242,7 +239,7 @@ Each hop along the co-occurrence graph reveals tags unreachable by semantic sear
 ## Returns
 
 JSON array sorted by aggregated NPMI score (descending). Each result:
-- tag, cn_name, category, count (post_count), cooc_score (normalized to [0,1])
+- tag, cn_name
 - sources: seed tags that contributed to this score
 - wiki: only if include_wiki=True
     """
@@ -306,9 +303,6 @@ JSON array sorted by aggregated NPMI score (descending). Each result:
         item = {
             "tag":        r.tag,
             "cn_name":    r.cn_name,
-            "category":   r.category,
-            "count":      r.post_count,
-            "cooc_score": r.cooc_score,
             "sources":    r.sources,
         }
         if include_wiki:
