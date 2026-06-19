@@ -2714,7 +2714,8 @@
       "tag_group:character_count"
     ],
     "faceless": [
-      "tag_group:character_count"
+      "tag_group:character_count",
+      "tag_group:face_tags"
     ],
     "1boy": [
       "tag_group:character_count"
@@ -4373,6 +4374,9 @@
     "name_tag": [
       "tag_group:text"
     ],
+    "narration": [
+      "tag_group:text"
+    ],
     "poster_(object)": [
       "tag_group:text"
     ],
@@ -4477,6 +4481,11 @@
     ],
     "talking": [
       "tag_group:text",
+      "tag_group:verbs_and_gerunds"
+    ],
+    "thinking": [
+      "tag_group:text",
+      "tag_group:face_tags",
       "tag_group:verbs_and_gerunds"
     ],
     "writing": [
@@ -6482,6 +6491,9 @@
     "oppai_challenge": [
       "tag_group:breasts_tags"
     ],
+    "powerful_breasts": [
+      "tag_group:breasts_tags"
+    ],
     "multiple_expressions": [
       "tag_group:face_tags"
     ],
@@ -6525,6 +6537,9 @@
     "closed_eyes": [
       "tag_group:face_tags",
       "tag_group:eyes_tags"
+    ],
+    "confident": [
+      "tag_group:face_tags"
     ],
     "confused": [
       "tag_group:face_tags"
@@ -6698,10 +6713,6 @@
     "surprised": [
       "tag_group:face_tags"
     ],
-    "thinking": [
-      "tag_group:face_tags",
-      "tag_group:verbs_and_gerunds"
-    ],
     "pensive": [
       "tag_group:face_tags"
     ],
@@ -6739,6 +6750,9 @@
       "tag_group:sex_acts"
     ],
     "ohhoai": [
+      "tag_group:face_tags"
+    ],
+    "ohogao": [
       "tag_group:face_tags"
     ],
     "seductive_smile": [
@@ -7068,7 +7082,13 @@
     "yurie_mouth": [
       "tag_group:face_tags"
     ],
+    "hole_in_face": [
+      "tag_group:face_tags"
+    ],
     "mob_face": [
+      "tag_group:face_tags"
+    ],
+    "void_face": [
       "tag_group:face_tags"
     ],
     "angry_dog_noises_(meme)": [
@@ -7493,10 +7513,13 @@
     "power_symbol-shaped_pupils": [
       "tag_group:eyes_tags"
     ],
+    "musical_note-shaped_pupils": [
+      "tag_group:eyes_tags"
+    ],
     "money-shaped_pupils": [
       "tag_group:eyes_tags"
     ],
-    "musical_note-shaped_pupils": [
+    "gear-shaped_pupils": [
       "tag_group:eyes_tags"
     ],
     "clock_eyes": [
@@ -7899,6 +7922,9 @@
       "tag_group:eyes_tags"
     ],
     "wall-eyed": [
+      "tag_group:eyes_tags"
+    ],
+    "gear_eyes": [
       "tag_group:eyes_tags"
     ],
     "biting_hair": [
@@ -9270,6 +9296,9 @@
       "tag_group:gestures"
     ],
     "x_fingers": [
+      "tag_group:gestures"
+    ],
+    "tribadism_gesture": [
       "tag_group:gestures"
     ],
     "heart_hands_duo": [
@@ -16665,7 +16694,10 @@
     "lifting_covers": [
       "tag_group:nudity"
     ],
-    "untied_bikini": [
+    "untied_bikini_bottom": [
+      "tag_group:nudity"
+    ],
+    "untied_bikini_top": [
       "tag_group:nudity"
     ],
     "open_bra": [
@@ -31268,6 +31300,9 @@
     "alizee": [
       "tag_group:people"
     ],
+    "amano_tsuki": [
+      "tag_group:people"
+    ],
     "andrew_wk": [
       "tag_group:people"
     ],
@@ -40266,7 +40301,7 @@
       "tag_group:technology",
       "tag_group:verbs_and_gerunds"
     ],
-    "cyber_elf_(mega_man)": [
+    "cyber-elf_(mega_man)": [
       "tag_group:technology"
     ],
     "mecha-drago": [
@@ -40419,7 +40454,10 @@
     "biting_cheek": [
       "tag_group:verbs_and_gerunds"
     ],
-    "biting_finger": [
+    "biting_another's_finger": [
+      "tag_group:verbs_and_gerunds"
+    ],
+    "biting_own_finger": [
       "tag_group:verbs_and_gerunds"
     ],
     "biting_foreskin": [
@@ -44313,6 +44351,9 @@
     "va-11_hall-a": [
       "tag_group:visual_novel_games"
     ],
+    "wholesome_monster_girl_academia": [
+      "tag_group:visual_novel_games"
+    ],
     "aiyoku_no_eustia": [
       "tag_group:visual_novel_games"
     ],
@@ -44647,6 +44688,9 @@
       "tag_group:visual_novel_games"
     ],
     "shuusaku": [
+      "tag_group:visual_novel_games"
+    ],
+    "snoot_game": [
       "tag_group:visual_novel_games"
     ],
     "soshite_ashita_no_sekai_yori": [
@@ -47248,6 +47292,7 @@
       "clothes_writing",
       "foreground_text",
       "name_tag",
+      "narration",
       "poster_(object)",
       "segment_display",
       "speech_bubble",
@@ -47287,6 +47332,7 @@
       "...!",
       "reading",
       "talking",
+      "thinking",
       "writing",
       "chinese_text",
       "simplified_chinese_text",
@@ -47921,7 +47967,8 @@
       "headphones_on_breasts",
       "tawawa_challenge",
       "object_on_pectorals",
-      "oppai_challenge"
+      "oppai_challenge",
+      "powerful_breasts"
     ],
     "tag_group:face_tags": [
       "multiple_expressions",
@@ -47939,6 +47986,7 @@
       "nose_blush",
       "bored",
       "closed_eyes",
+      "confident",
       "confused",
       "crazy",
       "despair",
@@ -48005,6 +48053,7 @@
       "aroused",
       "naughty_face",
       "ohhoai",
+      "ohogao",
       "seductive_smile",
       "torogao",
       "ass-to-mouth",
@@ -48110,7 +48159,10 @@
       "text_in_mouth",
       "triangle_mouth",
       "yurie_mouth",
+      "faceless",
+      "hole_in_face",
       "mob_face",
+      "void_face",
       "angry_dog_noises_(meme)",
       "awesome_face",
       "essex_face",
@@ -48253,8 +48305,9 @@
       "bone-shaped_pupils",
       "skull-shaped_pupils",
       "power_symbol-shaped_pupils",
-      "money-shaped_pupils",
       "musical_note-shaped_pupils",
+      "money-shaped_pupils",
+      "gear-shaped_pupils",
       "clock_eyes",
       "halation_pupils",
       "paw-shaped_pupils",
@@ -48406,7 +48459,8 @@
       "unusually_open_eyes",
       "upturned_eyes",
       "wall-eyed",
-      "wide-eyed"
+      "wide-eyed",
+      "gear_eyes"
     ],
     "tag_group:hair": [
       "biting_hair",
@@ -48874,6 +48928,7 @@
       "tsuki_ni_kawatte_oshioki_yo",
       "x_arms",
       "x_fingers",
+      "tribadism_gesture",
       "heart_hands_duo",
       "heart_hands_trio",
       "heart_hands_quartet",
@@ -51701,7 +51756,8 @@
       "bikini_pull",
       "cape_lift",
       "lifting_covers",
-      "untied_bikini",
+      "untied_bikini_bottom",
+      "untied_bikini_top",
       "open_bra",
       "open_kimono",
       "robe_slip",
@@ -56892,6 +56948,7 @@
       "ado_(utaite)",
       "aizome_karen",
       "alizee",
+      "amano_tsuki",
       "andrew_wk",
       "avril_lavigne",
       "axl_rose",
@@ -60142,7 +60199,7 @@
       "mechanic",
       "pilot",
       "programming",
-      "cyber_elf_(mega_man)",
+      "cyber-elf_(mega_man)",
       "mecha-drago",
       "transformers",
       "autobot",
@@ -60210,7 +60267,8 @@
       "biting_breast",
       "biting_cheek",
       "biting_ear",
-      "biting_finger",
+      "biting_another's_finger",
+      "biting_own_finger",
       "biting_foreskin",
       "biting_glove",
       "biting_another's_hand",
@@ -61759,6 +61817,7 @@
       "symphonic_rain",
       "uta_no_prince-sama",
       "va-11_hall-a",
+      "wholesome_monster_girl_academia",
       "air_(visual_novel)",
       "aiyoku_no_eustia",
       "akasen_gairo_~shouwa_33_nen_no_hatsuyuki~",
@@ -61872,6 +61931,7 @@
       "shuffle!",
       "shunki_gentei_poco_a_poco!",
       "shuusaku",
+      "snoot_game",
       "soshite_ashita_no_sekai_yori",
       "soukou_akki_muramasa",
       "starless",

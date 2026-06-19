@@ -18,3 +18,5 @@ CLAUDE.md
 *.zip
 .claude/
 docs/
+.*/
+/AGENTS.md

@@ -511,6 +511,10 @@ class DanbooruSearchUI:
                     f'初始化期间，您可以使用'
                     f'<a href="{_alt_url}" target="_blank" rel="noopener noreferrer" '
                     f'class="text-blue-600 hover:text-blue-800 underline font-bold">备用服务</a>'
+                    f'，或先查看'
+                    f'<a href="http://intro.sakizuki.site/index.html" '
+                    f'target="_blank" rel="noopener noreferrer" '
+                    f'class="text-blue-600 hover:text-blue-800 underline font-bold">使用指南</a>'
                 ).classes('text-xs text-blue-600 px-6 pb-3')
             self.init_banner.set_visibility(not DanbooruTagger.is_ready())
             if not DanbooruTagger.is_ready():
@@ -611,7 +615,7 @@ class DanbooruSearchUI:
 - **标签范围**：仅显示特征、角色与作品标签，且频数须 ≥ 100 (General, Character & Copyright only, Freq ≥ 100)
 - **集成与接口**：[ComfyUI 插件](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher) · [API 文档](/api/docs) · [MCP 接入](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline#mcp-接口)
 - **支持作者**：如果觉得好用，欢迎点击顶部给本 Space 点个 **Like ❤️**，或前往 [GitHub](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline) 点个 **Star ⭐**！
-- **🚀 首次使用？[点击查看使用指南](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)**，了解五种搜索模式与进阶技巧
+- **🚀 首次使用？[点击查看使用指南](http://intro.sakizuki.site/index.html)**，了解五种搜索模式与进阶技巧
 """).classes('text-sm text-gray-800 px-4 pb-3')
 
     # ── 搜索卡片 ─────────────────────────────────────────────────────────
@@ -623,7 +627,13 @@ class DanbooruSearchUI:
                 ui.label('Danbooru 标签模糊搜索').classes('text-2xl font-bold text-gray-800')
             ui.label(
                 '基于语义匹配的标签搜索引擎，支持多维匹配与共现关联推荐。'
-            ).classes('text-sm text-gray-500 -mt-1 mb-3')
+            ).classes('text-sm text-gray-500 -mt-1 mb-1')
+            ui.html(
+                '<a href="http://intro.sakizuki.site/index.html" '
+                'target="_blank" rel="noopener noreferrer" '
+                'class="text-blue-600 hover:text-blue-800 underline font-medium">'
+                '查看工具链介绍 / 使用指南 →</a>'
+            ).classes('text-sm mb-3')
 
             with ui.row().classes('w-full gap-3 items-stretch'):
                 self.search_input = ui.textarea(
@@ -1968,4 +1978,3 @@ if __name__ in {'__main__', '__mp_main__'}:
         show=not is_cloud(),
         reconnect_timeout=120,
     )
-

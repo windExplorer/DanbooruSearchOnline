@@ -86,12 +86,22 @@ Only supported for general, copyright, and character tag searches; **artists and
 
 ## Args
 - query: Natural language description (Chinese recommended).
-- search_mode: Preset strategy. Pick the one that matches your intent.
-    "full_scene"       — Full scene → prompt (e.g. "一个穿着白色水手服的少女在雨中奔跑")
-    "concept_explore"  — Vague concept exploration, broad recall (e.g. "赛博朋克服装", "兔耳朵", "中国风汉服")
+- search_mode: Preset strategy. **Default is "full_scene" — keep it unless the user's intent is genuinely exploratory.**
+    "full_scene"       — **DEFAULT.** Use whenever the user gives a concrete picture description: a specific
+                         scene, subject(s), clothing, pose, action, or background — no matter how detailed or how
+                         many elements. The user wants ONE coherent prompt for ONE intended image.
+                         (e.g. "一个穿着白色水手服的少女在雨中奔跑", "金发双马尾女孩坐在教室窗边看书，夕阳")
+    "concept_explore"  — **ONLY for open-ended browsing**, when the user wants to SEE A VARIETY of options for a
+                         vague/single concept and pick from them — i.e. "show me what kinds of X exist".
+                         Returns up to 80 candidates → high token cost. Do NOT use just because a description has
+                         many elements; a detailed scene is still "full_scene".
+                         (e.g. "各种各样的汉服", "兔耳朵都有哪些", "赛博朋克服装有什么风格")
     "subject_describe" — Describe **one** subject to find matching tags (e.g. "EVA中蓝发的驾驶员", "两侧有开口，前方有拉绳的运动短裤")
     "precise_lookup"   — Precise lookup / spell fix (e.g. "selafuku", "thighhigh")
-- HINT: In subject_describe mode, the tokenizer is disabled, and you can only describe one thing at a time. To search for multiple things at once, use concept_explore or full_scene.
+- DECISION RULE: Does the user want one specific picture (→ full_scene) or to browse many options for a concept
+  (→ concept_explore)? A long, multi-element description still maps to full_scene — element count is NOT the signal,
+  exploratory intent is.
+- HINT: In subject_describe mode, the tokenizer is disabled, and you can only describe one thing at a time. To search for multiple things at once, use full_scene (for a specific image) or concept_explore (for browsing).
 - category: Filter to a specific tag category. Default "all".
     "all"       — All (通用 + 版权 + 人物)
     "general"   — Visual attributes, clothing, pose, background, etc.
