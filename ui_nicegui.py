@@ -88,6 +88,16 @@ OPTIONAL_COLS = {
 _CONFIG_LS_KEY = 'danbooru_search_config'
 _CONFIG_VERSION = 6
 
+SPONSOR_IMAGE_URL = "https://akizukipic.oss-cn-beijing.aliyuncs.com/img/202501120027592.png"
+SPONSOR_TOOLCHAIN_URL = "http://intro.sakizuki.site/index.html"
+SPONSOR_NOTICE_TEXT = "喜欢的话，可以请作者喝杯咖啡"
+SPONSOR_TITLE = "谢谢你愿意支持"
+SPONSOR_BODY = (
+    "如果你喜欢这个小工具，可以自愿赞赏一点维护成本。"
+    "它会继续免费开放；赞赏不会解锁任何额外功能、不会提高额度、不会影响搜索结果，"
+    "量力而行就好，未成年人请勿赞赏。"
+)
+
 # 搜索模式预设
 _SEARCH_MODE_PRESETS: dict[str, dict] = {
     '精确查词': {'top_k': 20, 'limit': 10, 'popularity_weight': 0.15, 'use_segmentation': False, 'group_mode': 'off', 'max_per_group': 2},
@@ -200,6 +210,7 @@ class DanbooruSearchUI:
 
         self.mcp_notice = None
         self.notice_expansion = None
+        self.sponsor_dialog = None
 
         # 表格显示选项开关
         self.sw_semantic = None
@@ -238,6 +249,21 @@ class DanbooruSearchUI:
                 )
             except AttributeError:
                 pass
+
+    def _build_sponsor_dialog(self):
+        with ui.dialog() as self.sponsor_dialog, ui.card().classes('w-full max-w-sm'):
+            with ui.column().classes('w-full items-center gap-2 text-center'):
+                ui.label(SPONSOR_TITLE).classes('text-base font-bold text-gray-800')
+                ui.label(SPONSOR_BODY).classes('text-sm text-gray-600 leading-relaxed')
+                ui.image(SPONSOR_IMAGE_URL).classes('w-60 max-w-full rounded border border-gray-200')
+                ui.label('微信赞赏码').classes('text-xs text-gray-400')
+                ui.link(
+                    '如果你想继续折腾，也可以看看基于这个小工具的更多工具链',
+                    SPONSOR_TOOLCHAIN_URL,
+                    new_tab=True,
+                ).classes('text-xs text-blue-500 hover:text-blue-700 hover:underline')
+            with ui.row().classes('w-full justify-end'):
+                ui.button('关闭', on_click=self.sponsor_dialog.close).props('flat color=grey-7')
 
     def _mark_interaction(self, e=None):
         if not self.current_search_interacted:
@@ -491,6 +517,8 @@ class DanbooruSearchUI:
             </script>
         ''')
 
+        self._build_sponsor_dialog()
+
         with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
 
             # ── 初始化提示 ──
@@ -547,6 +575,9 @@ class DanbooruSearchUI:
             with ui.element('div').classes('w-full text-center py-4 mt-2'):
                 self.search_count_label = ui.html('正在加载数据...').classes('text-xs text-gray-400')
                 self._update_footer_text()
+                ui.button(SPONSOR_NOTICE_TEXT, on_click=self.sponsor_dialog.open) \
+                    .props('flat dense no-caps color=grey-6') \
+                    .classes('text-xs mt-1')
 
     # ── 公告栏（标签组 + MCP）─────────────────────────────────────────────
 
@@ -614,7 +645,7 @@ class DanbooruSearchUI:
 - **检索限制**：仅支持中/英双语查找 ，更推荐中文(CN/EN only,CN is preferred)
 - **标签范围**：仅显示特征、角色与作品标签，且频数须 ≥ 100 (General, Character & Copyright only, Freq ≥ 100)
 - **集成与接口**：[ComfyUI 插件](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher) · [API 文档](/api/docs) · [MCP 接入](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline#mcp-接口)
-- **支持作者**：如果觉得好用，欢迎点击顶部给本 Space 点个 **Like ❤️**，或前往 [GitHub](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline) 点个 **Star ⭐**！
+- **支持作者**：如果觉得好用，欢迎点击顶部给本 Space 点个 **Like ❤️**，或前往 [GitHub](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline) 点个 **Star ⭐**！也可以自愿赞赏一点维护成本；不影响任何功能使用。
 - **🚀 首次使用？[点击查看使用指南](http://intro.sakizuki.site/index.html)**，了解五种搜索模式与进阶技巧
 """).classes('text-sm text-gray-800 px-4 pb-3')
 
