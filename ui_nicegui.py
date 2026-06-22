@@ -154,6 +154,11 @@ def _format_tag_with_weight(tag: str, weight: float, fmt: str = 'sdxl') -> str:
     return f'({tag}:{weight:.1f})'
 
 
+def _format_selected_tag_label(tag: str, cn_name: str = '') -> str:
+    cn_first = (cn_name or '').split(',', 1)[0].strip()
+    return f'{tag} | {cn_first}' if cn_first else tag
+
+
 # ── UI 类 ─────────────────────────────────────────────────────────────────────
 
 class DanbooruSearchUI:
@@ -845,6 +850,7 @@ class DanbooruSearchUI:
                 w = self.tag_weights.get(tag, 1.0)
                 extra_cls = 'boosted' if w > 1.0 else ('reduced' if w < 1.0 else '')
                 w_str = f'{w:.1f}'
+                display_label = _format_selected_tag_label(tag, self._get_cn_name_for_tag(tag))
                 with ui.element('div').classes(f'weight-chip {extra_cls}'):
                     # 删除按钮（×）
                     with ui.element('button').classes('weight-btn').props(f'title="移除 {tag}"').on(
@@ -857,9 +863,9 @@ class DanbooruSearchUI:
                     ):
                         ui.html('&minus;')
                     # 标签名
-                    ui.label(tag).style(
+                    ui.label(display_label).style(
                         'font-family:Consolas,Monaco,monospace;font-size:12px;'
-                        'color:#2c5282;max-width:150px;overflow:hidden;'
+                        'color:#2c5282;max-width:240px;overflow:hidden;'
                         'text-overflow:ellipsis;white-space:nowrap;'
                     )
                     # 权重值（仅非 1.0 时显示）
@@ -893,6 +899,26 @@ class DanbooruSearchUI:
         self.tag_weights[tag] = new_w
         self._save_staged_tags()
         self._render_selected_chips()
+
+    def _get_cn_name_for_tag(self, tag: str) -> str:
+        """尽量从当前 UI 数据中取标签中文名，用于已选区展示。"""
+        if self.result_table is not None:
+            for row in self.result_table.rows:
+                if row.get('tag') == tag:
+                    return str(row.get('cn_name') or '')
+
+        for item in self.current_related:
+            if getattr(item, 'tag', None) == tag:
+                return str(getattr(item, 'cn_name', '') or '')
+
+        try:
+            tagger = DanbooruTagger._instance
+            if tagger and tagger.df is not None and tag in tagger._name_to_idx:
+                idx = tagger._name_to_idx[tag]
+                return str(tagger.df.iloc[idx].get('cn_name', '') or '')
+        except Exception:
+            pass
+        return ''
 
     def _remove_selected_tag(self, tag: str):
         """从已选中移除标签（同步表格选中状态）。"""
