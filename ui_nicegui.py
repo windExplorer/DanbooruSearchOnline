@@ -108,7 +108,6 @@ _SEARCH_MODE_PRESETS: dict[str, dict] = {
 _SEARCH_MODE_OPTIONS = ['自定义'] + list(_SEARCH_MODE_PRESETS.keys())
 
 
-
 # ── 辅助函数 ───────────────────────────────────────────────────────────────────
 
 def _get_git_commit() -> str:
