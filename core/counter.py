@@ -355,12 +355,33 @@ async def add_keywords(words: list[str]):
         _dirty_keywords[word] += 1
     _check_sync()
 
-async def add_bad_case(query: str, platform: str = '', settings: dict | None = None) -> None:
+async def add_bad_case(
+    query: str,
+    platform: str = '',
+    settings: dict | None = None,
+    feedback_type: str = 'search_bad_case',
+    detail: str = '',
+    tag: str = '',
+    current_cn_name: str = '',
+    suggested_cn_name: str = '',
+    category: str = '',
+) -> None:
     global _dirty_bad_cases, _memory_bad_cases
     entry = {
+        'type': feedback_type,
         'q': query,
         't': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }
+    optional_fields = {
+        'detail': detail,
+        'tag': tag,
+        'current_cn_name': current_cn_name,
+        'suggested_cn_name': suggested_cn_name,
+        'category': category,
+    }
+    for key, value in optional_fields.items():
+        if value:
+            entry[key] = value
     if platform:
         entry['platform'] = platform
     if settings:

@@ -1016,6 +1016,7 @@ class DanbooruSearchUI:
                 ).classes('w-full')
                 self.result_table.on('selection', self._update_selection_display)
                 self.result_table.on('link_click', self._mark_interaction)
+                self.result_table.on('translation_feedback', self.report_translation_error)
                 self.result_table.on('pagination', lambda _: self._save_config())
 
                 # 自定义行模板：行背景色按分类，整行悬浮显示 wiki（NSFW模糊行除外）
@@ -1036,8 +1037,16 @@ class DanbooruSearchUI:
                             <template v-if="col.name === 'tag' || col.name === 'cn_name'">
                                 <div :class="props.row._nsfw_blocked ? 'nsfw-blur-cell' : ''">
                                     <template v-if="col.name === 'cn_name' && col.value">
-                                        <span style="font-size:14px">
-                                            {{ col.value.split(',')[0] }}
+                                        <span style="font-size:14px;display:inline-flex;align-items:center;gap:4px;">
+                                            <span>{{ col.value.split(',')[0] }}</span>
+                                            <q-btn icon="report_problem"
+                                                size="sm"
+                                                dense flat round
+                                                color="grey-5"
+                                                padding="xs"
+                                                @click.stop.prevent="console.debug('[DanbooruSearch] translation_feedback click', props.row); $parent.$emit('translation_feedback', props.row)">
+                                                <q-tooltip>反馈翻译错误</q-tooltip>
+                                            </q-btn>
                                         </span>
                                     </template>
                                     <template v-else-if="col.name === 'tag'">
@@ -1908,27 +1917,115 @@ class DanbooruSearchUI:
         else:
             ui.notify('暂无标签可复制', type='warning')
 
-    async def report_bad_case(self):
+    def _feedback_settings(self) -> dict:
+        return {
+            'top_k': int(self.input_top_k.value) if self.input_top_k else None,
+            'segmentation': self.input_segment.value if self.input_segment else None,
+            'nsfw': self.input_nsfw.value if self.input_nsfw else None,
+        }
+
+    def report_bad_case(self):
         from platform_utils import PLATFORM
         query = self.current_query_str.strip()
         if len(query) <= 1:
             ui.notify('搜索词太短，无法提交反馈。', type='warning', timeout=2000)
             return
-        if self.bad_case_btn is not None:
-            self.bad_case_btn.disable()
-        try:
-            settings = {
-                'top_k': int(self.input_top_k.value) if self.input_top_k else None,
-                'segmentation': self.input_segment.value if self.input_segment else None,
-                'nsfw': self.input_nsfw.value if self.input_nsfw else None,
-            }
-            await counter.add_bad_case(query, platform=PLATFORM, settings=settings)
-            ui.notify('感谢反馈！我们会持续优化。', type='positive', timeout=3000)
-        except Exception as e:
-            print(f'[UI] bad_case 记录异常: {e}')
-            ui.notify('记录失败，请稍后再试。', type='warning', timeout=3000)
-            if self.bad_case_btn is not None:
-                self.bad_case_btn.enable()
+
+        with ui.dialog() as dialog, ui.card().classes('w-full max-w-lg'):
+            ui.label('反馈搜索问题').classes('text-base font-bold text-gray-800')
+            ui.label(f'当前搜索词：{query}').classes('text-sm text-gray-600')
+            detail_input = ui.textarea(
+                label='具体问题（可选）',
+                placeholder='例如：结果偏题、缺少某个关键标签、召回了不相关角色/作品...',
+            ).props('outlined autogrow maxlength=500 counter').classes('w-full')
+
+            async def submit_feedback():
+                detail = (detail_input.value or '').strip()
+
+                submit_btn.disable()
+                try:
+                    await counter.add_bad_case(
+                        query,
+                        platform=PLATFORM,
+                        settings=self._feedback_settings(),
+                        feedback_type='search_bad_case',
+                        detail=detail,
+                    )
+                    if self.bad_case_btn is not None:
+                        self.bad_case_btn.disable()
+                    dialog.close()
+                    ui.notify('感谢反馈！我们会持续优化。', type='positive', timeout=3000)
+                except Exception as e:
+                    print(f'[UI] bad_case 记录异常: {e}')
+                    submit_btn.enable()
+                    ui.notify('记录失败，请稍后再试。', type='warning', timeout=3000)
+
+            with ui.row().classes('w-full justify-end gap-2'):
+                ui.button('取消', on_click=dialog.close).props('flat color=grey-7')
+                submit_btn = ui.button('提交反馈', on_click=submit_feedback).props('unelevated color=primary')
+        dialog.open()
+
+    def report_translation_error(self, e):
+        from platform_utils import PLATFORM
+        raw_args = getattr(e, 'args', None)
+        # print(f'[UI] translation_feedback event received: {raw_args!r}', flush=True)
+        row = raw_args
+        if isinstance(row, list) and row:
+            row = row[0]
+        if not isinstance(row, dict):
+            print(f'[UI] translation_feedback invalid payload: {raw_args!r}', flush=True)
+            ui.notify('无法读取当前词条信息。', type='warning', timeout=2000)
+            return
+
+        tag = str(row.get('tag') or '').strip()
+        current_cn_name = str(row.get('cn_name') or '').strip()
+        if not tag:
+            ui.notify('无法读取当前词条。', type='warning', timeout=2000)
+            return
+
+        query = self.current_query_str.strip()
+        current_cn_first = current_cn_name.split(',', 1)[0].strip()
+        with ui.dialog() as dialog, ui.card().classes('w-full max-w-lg'):
+            ui.label('反馈翻译错误').classes('text-base font-bold text-gray-800')
+            ui.label(f'词条：{tag}').classes('text-sm font-mono text-gray-700')
+            ui.label(f'当前中文名：{current_cn_first or current_cn_name or "（空）"}').classes('text-sm text-gray-600')
+            suggested_input = ui.input(
+                label='建议中文名（可选）',
+                placeholder='如果有更合适的译名，可以填在这里',
+            ).props('outlined maxlength=120 counter').classes('w-full')
+            detail_input = ui.textarea(
+                label='问题说明（可选）',
+                placeholder='例如：含义不准确、作品/角色名误译、中文名缺失...',
+            ).props('outlined autogrow maxlength=500 counter').classes('w-full')
+
+            async def submit_feedback():
+                suggested = (suggested_input.value or '').strip()
+                detail = (detail_input.value or '').strip()
+
+                submit_btn.disable()
+                try:
+                    await counter.add_bad_case(
+                        query,
+                        platform=PLATFORM,
+                        settings=self._feedback_settings(),
+                        feedback_type='translation_error',
+                        detail=detail,
+                        tag=tag,
+                        current_cn_name=current_cn_name,
+                        suggested_cn_name=suggested,
+                        category=str(row.get('category') or ''),
+                    )
+                    dialog.close()
+                    ui.notify('感谢反馈！这条翻译问题已记录。', type='positive', timeout=3000)
+                except Exception as e:
+                    print(f'[UI] translation_error 记录异常: {e}')
+                    submit_btn.enable()
+                    ui.notify('记录失败，请稍后再试。', type='warning', timeout=3000)
+
+            with ui.row().classes('w-full justify-end gap-2'):
+                ui.button('取消', on_click=dialog.close).props('flat color=grey-7')
+                submit_btn = ui.button('提交反馈', on_click=submit_feedback).props('unelevated color=primary')
+        dialog.open()
 
 # ── 页面路由 ───────────────────────────────────────────────────────────────────
 

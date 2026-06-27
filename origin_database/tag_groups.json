@@ -2617,6 +2617,9 @@
     "the_birth_of_venus": [
       "tag_group:fine_art_parody"
     ],
+    "the_two-thousand_yard_stare": [
+      "tag_group:fine_art_parody"
+    ],
     "almond_blossoms_(van_gogh)": [
       "tag_group:fine_art_parody"
     ],
@@ -4467,6 +4470,9 @@
       "tag_group:text"
     ],
     "!!": [
+      "tag_group:text"
+    ],
+    "??": [
       "tag_group:text"
     ],
     "...?": [
@@ -6868,7 +6874,8 @@
       "tag_group:face_tags"
     ],
     ";3": [
-      "tag_group:face_tags"
+      "tag_group:face_tags",
+      "tag_group:eyes_tags"
     ],
     "x3": [
       "tag_group:face_tags",
@@ -6938,7 +6945,8 @@
       "tag_group:sex_acts"
     ],
     ";o": [
-      "tag_group:face_tags"
+      "tag_group:face_tags",
+      "tag_group:eyes_tags"
     ],
     "o3o": [
       "tag_group:face_tags"
@@ -6966,7 +6974,8 @@
       "tag_group:face_tags"
     ],
     "^q^": [
-      "tag_group:face_tags"
+      "tag_group:face_tags",
+      "tag_group:eyes_tags"
     ],
     ">_<": [
       "tag_group:face_tags",
@@ -7696,6 +7705,9 @@
     "no_eyes": [
       "tag_group:eyes_tags"
     ],
+    "x<": [
+      "tag_group:eyes_tags"
+    ],
     "dx": [
       "tag_group:eyes_tags"
     ],
@@ -7703,6 +7715,9 @@
       "tag_group:eyes_tags"
     ],
     "6_9": [
+      "tag_group:eyes_tags"
+    ],
+    "^v^": [
       "tag_group:eyes_tags"
     ],
     "x_x": [
@@ -7713,6 +7728,9 @@
       "tag_group:verbs_and_gerunds"
     ],
     ";>": [
+      "tag_group:eyes_tags"
+    ],
+    ";": [
       "tag_group:eyes_tags"
     ],
     "covering_own_eyes": [
@@ -16071,6 +16089,9 @@
     "beatnik": [
       "tag_group:fashion_style"
     ],
+    "boho-chic": [
+      "tag_group:fashion_style"
+    ],
     "cybergoth": [
       "tag_group:fashion_style"
     ],
@@ -16114,6 +16135,9 @@
       "tag_group:fashion_style"
     ],
     "trad_goth": [
+      "tag_group:fashion_style"
+    ],
+    "twee_fashion": [
       "tag_group:fashion_style"
     ],
     "wishcore": [
@@ -17724,6 +17748,7 @@
     ],
     "spreader_bar": [
       "tag_group:sex_acts",
+      "tag_group:bdsm_and_torture",
       "tag_group:sex_objects"
     ],
     "suspension": [
@@ -30790,6 +30815,9 @@
     "steven_spielberg": [
       "tag_group:people"
     ],
+    "suzuki_koji": [
+      "tag_group:people"
+    ],
     "taguchi_kiyotaka": [
       "tag_group:people"
     ],
@@ -30803,6 +30831,9 @@
       "tag_group:people"
     ],
     "togashi_yoshihiro_(character)": [
+      "tag_group:people"
+    ],
+    "tom_kane": [
       "tag_group:people"
     ],
     "tomino_yoshiyuki": [
@@ -30959,6 +30990,9 @@
       "tag_group:people"
     ],
     "danny_wells": [
+      "tag_group:people"
+    ],
+    "daveigh_chase": [
       "tag_group:people"
     ],
     "david_hasselhoff": [
@@ -31207,7 +31241,7 @@
     "samuel_l._jackson": [
       "tag_group:people"
     ],
-    "sasaki_rico_(voice_actor)": [
+    "sasaki_rico": [
       "tag_group:people"
     ],
     "scarlett_johannson": [
@@ -32257,6 +32291,9 @@
     "mengistu_haile_mariam": [
       "tag_group:people"
     ],
+    "alan_peter_cayetano": [
+      "tag_group:people"
+    ],
     "benigno_aquino_jr": [
       "tag_group:people"
     ],
@@ -33294,6 +33331,9 @@
     "quinn_hughes": [
       "tag_group:people"
     ],
+    "sidney_crosby": [
+      "tag_group:people"
+    ],
     "mixed_martial_arts": [
       "tag_group:people"
     ],
@@ -33841,6 +33881,9 @@
       "tag_group:people"
     ],
     "dan_avidan": [
+      "tag_group:people"
+    ],
+    "darksydephil": [
       "tag_group:people"
     ],
     "destiny_(streamer)": [
@@ -42229,7 +42272,7 @@
     "night_wizard": [
       "tag_group:role-playing_games"
     ],
-    "paranoia_(rpg)": [
+    "paranoia_(ttrpg)": [
       "tag_group:role-playing_games"
     ],
     "pathfinder": [
@@ -42256,7 +42299,7 @@
     "yuuyake_koyake": [
       "tag_group:role-playing_games"
     ],
-    "zettai_reido_(rpg)": [
+    "zettai_reido_(ttrpg)": [
       "tag_group:role-playing_games"
     ],
     ".hack//": [
@@ -43896,6 +43939,9 @@
       "tag_group:shooter_games"
     ],
     "crysis": [
+      "tag_group:shooter_games"
+    ],
+    "ctesiphon": [
       "tag_group:shooter_games"
     ],
     "delta_force_(game)": [
@@ -46593,6 +46639,7 @@
       "l'amour_de_pierrot",
       "the_persistence_of_memory",
       "the_birth_of_venus",
+      "the_two-thousand_yard_stare",
       "almond_blossoms_(van_gogh)",
       "cafe_terrace_at_night",
       "painter_on_the_road_to_tarascon_(van_gogh)",
@@ -47327,6 +47374,7 @@
       "!",
       "?",
       "!!",
+      "??",
       "!?",
       "...?",
       "...!",
@@ -48371,11 +48419,14 @@
       "no_eyes",
       ">_<",
       "x3",
+      "x<",
       "xd",
       "dx",
       "3_3",
       "6_9",
       "^_^",
+      "^v^",
+      "^q^",
       "=_=",
       "+_+",
       "._.",
@@ -48389,6 +48440,9 @@
       ";<",
       ";>",
       ";p",
+      ";o",
+      ";3",
+      ";",
       "covering_own_eyes",
       "hair_over_eyes",
       "hair_over_one_eye",
@@ -51518,6 +51572,7 @@
       "wa_lolita",
       "balletcore",
       "beatnik",
+      "boho-chic",
       "cybergoth",
       "e-kid_fashion",
       "emo_fashion",
@@ -51534,6 +51589,7 @@
       "scene_fashion",
       "steampunk",
       "trad_goth",
+      "twee_fashion",
       "whimsy_twee",
       "wishcore",
       "yabi_fashion",
@@ -52488,6 +52544,7 @@
       "neck_violin",
       "shackles",
       "shibari",
+      "spreader_bar",
       "stationary_restraints",
       "stealth_bondage",
       "stocks",
@@ -56777,11 +56834,13 @@
       "stan_lee",
       "stephen_hillenburg",
       "steven_spielberg",
+      "suzuki_koji",
       "taguchi_kiyotaka",
       "takahashi_kazuki_(person)",
       "takahashi_ryousuke_(director)",
       "terry_pratchett",
       "togashi_yoshihiro_(character)",
+      "tom_kane",
       "tomino_yoshiyuki",
       "toriyama_akira_(character)",
       "tsuburaya_eiji",
@@ -56834,6 +56893,7 @@
       "danny_lee",
       "danny_trejo",
       "danny_wells",
+      "daveigh_chase",
       "david_hasselhoff",
       "deforest_kelley",
       "diego_luna",
@@ -56917,7 +56977,7 @@
       "robin_williams",
       "ryan_gosling",
       "samuel_l._jackson",
-      "sasaki_rico_(voice_actor)",
+      "sasaki_rico",
       "scarlett_johannson",
       "sean_young",
       "seth_rogen",
@@ -57278,6 +57338,7 @@
       "fidel_castro",
       "margrethe_ii",
       "mengistu_haile_mariam",
+      "alan_peter_cayetano",
       "benigno_aquino_jr",
       "ferdinand_marcos",
       "miriam_defensor_santiago",
@@ -57630,6 +57691,7 @@
       "logan_couture",
       "macklin_celebrini",
       "quinn_hughes",
+      "sidney_crosby",
       "mixed_martial_arts",
       "akebono_tarou",
       "mirko_filipovic",
@@ -57815,6 +57877,7 @@
       "chris_g",
       "cr1tikal",
       "dan_avidan",
+      "darksydephil",
       "destiny_(streamer)",
       "dream_(youtuber)",
       "elrubius",
@@ -61085,7 +61148,7 @@
       "meikyuu_kingdom",
       "nagai_gojitsudan_no_nechronica",
       "night_wizard",
-      "paranoia_(rpg)",
+      "paranoia_(ttrpg)",
       "pathfinder",
       "runequest",
       "sword_world",
@@ -61094,7 +61157,7 @@
       "warhammer_fantasy",
       "world_of_darkness",
       "yuuyake_koyake",
-      "zettai_reido_(rpg)",
+      "zettai_reido_(ttrpg)",
       "video_game",
       ".hack//",
       "7th_dragon",
@@ -61652,6 +61715,7 @@
       "the_citadel",
       "counter-strike",
       "crysis",
+      "ctesiphon",
       "cyberpunk_2077",
       "delta_force_(game)",
       "doom_(series)",
