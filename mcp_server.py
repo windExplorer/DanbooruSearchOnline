@@ -590,25 +590,80 @@ prompt 内部分两层组装，同一语义不跨层重复：
 
 ---
 
-## 冲突检查（输出前必做）
+## 标签质量检查（输出前必做）
+
+### 冲突消解
 
 组装前必须消解以下冲突，逐项通过后才输出：
 
-| 冲突对 | 规则 |
-|--------|------|
-| `solo` vs 多人 | 选一个，不共存 |
-| `close-up` vs `full body` | 选一个景别 |
-| `from above` vs `from below` | 选一个视角 |
-| `from front` vs `from behind` | 选一个朝向 |
-| `closed eyes` vs `looking at viewer` | 选一个视线 |
-| 裸体 vs 服装 | 选一个着装状态 |
-| 多角色属性归属 | 发色/服装必须绑定具体角色，不串 |
-| 室内光源 vs 室外背景 | 光源和背景必须同空间 |
-| 背光 | 必须补脸部补光或轮廓保护 |
+#### 视角互斥示例
 
-单人正面默认保护脸部：保留 `looking at viewer` 或 `facing viewer`，空间叙事层补一句脸部清晰。
+| 标签A | 标签B | 原因 |
+|---|---|---|
+| `from front` | `from behind` | 物理矛盾 |
+| `from above` | `from below` | 物理矛盾 |
+| `looking at viewer` | `facing away` | 视线矛盾 |
+| `pov` | `full body` | POV 不可能看到自己全身 |
+| `close-up` | `full body` | 景别矛盾 |
 
-多人必须绑定：`Place X on the left, with [hair], [outfit], [action].`
+#### 身份互斥示例
+
+| 标签A | 标签B | 原因 |
+|---|---|---|
+| `solo` | `hetero` / `1boy` / `yuri` | 单人不存在互动 |
+| `femdom` | `male-on-female rape` | 逻辑矛盾（主导方冲突） |
+| `sleeping` / `unconscious` | `looking at viewer` | 无意识不可能直视 |
+| `blindfold` | `heart-shaped pupils` / `rolling eyes` | 看不到眼睛 |
+
+#### 服装互斥示例
+
+| 标签A | 标签B | 原因 |
+|---|---|---|
+| `completely nude` | 任何具体服装标签 | 全裸不穿衣 |
+| `pantyhose` | `barefoot` | 穿了丝袜不可能光脚（除非 `torn pantyhose`） |
+| `blindfold` | `glasses` | 物理冲突 |
+| 内衣套装 (`cat lingerie`, `lace lingerie`, `babydoll`, `negligee`, `chemise` 等) | `no panties` / `bottomless` | 内衣套装隐含包含内裤，模型优先解析套装忽略暴露标签；需暴露时拆为单件（`cat bra` + `no panties`） |
+
+> **不互斥**：外衣/制服（`maid outfit`、`school uniform`、`bunny suit`、`sailor uniform` 等）与 `no panties` / `bottomless` 完全兼容——穿制服不穿内裤 = 合理场景。
+
+#### 动作互斥示例
+
+| 标签A | 标签B | 原因 |
+|---|---|---|
+| `standing sex` | `lying` / `on back` | 体位矛盾 |
+| `missionary` | `doggystyle` | 不可能同时两个体位 |
+| `cowgirl position` | `prone bone` | 体位矛盾 |
+
+#### 细节过多互斥示例
+
+同一身体部位同时堆叠多个细节标签会导致模型过度渲染，产生畸形。**每部位细节标签 ≤2 个，且不能互斥。**
+
+| 部位 | 矛盾组合 | 原因 |
+|---|---|---|
+| 脚趾 | `spread toes` + `toe scrunch` / `toes curling` | 舒展 vs 蜷缩，物理矛盾 |
+| 脚趾 | `spread toes` + `feet together` | 分趾需要空间，合拢则压缩 |
+| 手指 | `spread fingers` + `clenched fist` / `gripping` | 张开 vs 握拳 |
+| 胸部 | `bouncing breasts` + `breasts squeeze together` | 弹跳 vs 挤压，动态矛盾 |
+| 嘴巴 | `open mouth` + `clenched teeth` / `closed mouth` | 张嘴 vs 闭嘴 |
+| 眼睛 | `rolling eyes` + `looking at viewer` | 翻白眼 vs 直视 |
+| 腿部 | `spread legs` + `legs together` | 分开 vs 并拢 |
+| 足部整体 | 3 个以上足部标签（如 `foot focus` + `footjob` + `toe scrunch` + `spread toes`） | 过度细化导致脚趾/脚掌畸形 |
+
+
+### 视线保护规则
+
+**单人场景下**，除非用户明确要求「背影/背对/转身离开/侧脸/profile/from behind」等具体视线限制，否则必须注入 `direct eye contact, facing viewer`。
+**两人及以上场景**：不强制注入 `direct eye contact`。根据角色间互动关系选择合适的视线标签（如 `looking at another`），或由用户明确指定。
+
+### 标签数量
+
+组装前按照下面的表格检查标签数量，严禁输出过多标签。过多标签会破坏模型的注意力。
+
+| 场景复杂度 | 总标签数 |
+|---|---|
+| 简单 | 16-30 |
+| 标准 | 22-38 |
+| 复杂（多人/特殊主题/剧情主视觉） | 30-48 | 
 
 ---
 
@@ -640,7 +695,7 @@ prompt 内部分两层组装，同一语义不跨层重复：
 ### 多人物详细结构（防串扰核心规则）
 
 ```
-[quality/meta/safety], [2girls / 1girl 1boy],
+[quality/meta/safety], [2girls / 1girl 1boy],[多人互动标签,例如：duo, holding each other's hands...]
 [character_A name], [series_A], [A hair], [A eyes], [A clothing], [A body], [A expression],
 [character_B name], [series_B], [B hair], [B eyes], [B clothing], [B body], [B expression],
 [shared pose/action], [background], [atmosphere], [composition], [@artist]
@@ -672,6 +727,9 @@ prompt 内部分两层组装，同一语义不跨层重复：
 
 ### 数据集标签（非动漫风格时的备选）
 
+当且仅当用户明确要求抽象、油画、概念艺术、数字绘画、插画风格，且 **明确要求排除动漫风格** 时才可用。
+如果用户仅要求油画风格，但没有明确说明排除动漫风格，仍然不能使用。
+
 在提示词最开头另起一行使用，可大幅改变风格倾向：
 - `ye-pop`：LAION-POP 数据集风格，偏抽象/油画/概念艺术
 - `deviantart`：DeviantArt 数据集风格，偏数字绘画/插画
@@ -695,7 +753,7 @@ masterpiece, best quality, very aesthetic, score_7, safe,
 ## 权重语法
 
 Anima 支持 Prompt Weighting，但需要的权重值 **高于 SDXL**：
-
+- 慎用权重：一段提示词中最多用权重强调4个标签，少而精，只强调最重要的部分
 - 正常强调：`(tag:2)` 起步
 - 强强调：`(tag:3)` 到 `(tag:5)`
 - 权重取值范围：2 ~ 5
@@ -719,16 +777,12 @@ Anima 支持 Prompt Weighting，但需要的权重值 **高于 SDXL**：
 Anima 在多人场景中极易发生特征混淆。必须严格遵守：
 
 1. **角色属性按角色分组排列**。同一角色的发型、瞳色、服装、体型连续出现后再切换。严禁交叉排列（如 `blue hair, red hair, short hair, long hair`）。
-
-2. **空间叙事层中为每个角色写一句"外观锚定短语"**。格式：`CharacterName with [key features]... do something...` 明确指出视觉归属。这比仅靠标签的防串扰效果强得多。
-
-3. **使用空间方位词分离角色**：left/right/foreground/background。
-
-4. **为易混淆特征使用权重**：`(blue hair:2)`, `(red hair:2)`。
-
-5. **角色外观在硬锚点层中充分描述**。官方文档明确指出：先命名角色，再描述其外观。仅列出角色名而不描述外观会让模型困惑。
-
-6. **空间叙事层中不重复标签内容**——空间叙事层补充空间关系、互动动作、光影氛围、构图取景。
+2. **互动词必须紧跟在人数后**。如果画中有多个人物，必须在人数声明完毕后，**立即** 写下他们的互动行为。推荐写法：2girls, duo, holding each other's hands,，然后开始分开描述每位美少女的容貌和衣服。
+3. **空间叙事层中为每个角色写一句"外观锚定短语"**。格式：`CharacterName with [key features]... do something...` 明确指出视觉归属。这比仅靠标签的防串扰效果强得多。
+4. **使用空间方位词分离角色**：left/right/foreground/background。
+5. **为易混淆特征使用权重**：`(blue hair:2)`, `(red hair:2)`。
+6. **角色外观在硬锚点层中充分描述**。官方文档明确指出：先命名角色，再描述其外观。仅列出角色名而不描述外观会让模型困惑。
+7. **空间叙事层中不重复标签内容**——空间叙事层补充空间关系、互动动作、光影氛围、构图取景。
 
 ---
 
