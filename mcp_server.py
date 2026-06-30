@@ -13,6 +13,7 @@ MCP 服务层
 支持的工具：
     search_tags        自然语言搜索标签
     get_related_tags   基于共现表查关联推荐
+    get_artist_profile 查询单个画师常见共现标签
     get_anima_format   返回 Anima 模型 Hybrid 提示词格式规范
     get_newbie_format  返回 NewBie 模型 XML 提示词格式规范
 """
@@ -72,6 +73,29 @@ mcp = FastMCP(
 )
 
 
+def _resolve_canonical_tags(tagger: DanbooruTagger, tags: list[str]) -> tuple[list[str], list[str], dict[str, str], dict[str, list[str]]]:
+    """轻量解析 canonical tag 名，不调用语义搜索。"""
+    resolved_tags: list[str] = []
+    invalid_tags: list[str] = []
+    corrections: dict[str, str] = {}
+    candidates: dict[str, list[str]] = {}
+
+    for raw_tag in tags:
+        resolved = tagger.resolve_tag_name(raw_tag)
+        tag = resolved.get("tag")
+        if tag:
+            resolved_tags.append(tag)
+            if tag != raw_tag:
+                corrections[raw_tag] = tag
+            continue
+
+        invalid_tags.append(raw_tag)
+        if resolved.get("candidates"):
+            candidates[raw_tag] = resolved["candidates"]
+
+    return resolved_tags, invalid_tags, corrections, candidates
+
+
 @mcp.tool()
 async def search_tags(
     query: str,
@@ -81,65 +105,66 @@ async def search_tags(
     include_wiki: bool = False,
 ) -> str:
     """
-Search Danbooru tags using natural language and return a ready-to-use prompt.
-Only supported for general, copyright, and character tag searches; **artists and meta tags are not supported.**
+使用自然语言搜索 Danbooru 视觉标签、角色标签、作品标签，并返回可直接用于提示词的 tag 列表。
 
-## Args
-- query: Natural language description (Chinese recommended).
-- search_mode: Preset strategy. **Default is "full_scene" — keep it unless the user's intent is genuinely exploratory.**
-    "full_scene"       — **DEFAULT.** Use whenever the user gives a concrete picture description: a specific
-                         scene, subject(s), clothing, pose, action, or background — no matter how detailed or how
-                         many elements. The user wants ONE coherent prompt for ONE intended image.
+本工具适合搜索可见画面内容：主体、服装、姿势、动作、表情、背景、构图、角色名、作品名等。
+
+不要用本工具搜索画师名、画师风格、creator/artist lookup，也不要用它验证某个画师标签是否存在。
+遇到 "Mika Pikazo style"、"画师 mika_pikazo"、"by redjuice"、"这个画师常画什么" 这类请求时，
+应改用 get_artist_profile。若用户同时给出画师/风格参考和可见画面描述，只把可见画面描述交给
+search_tags，不要把画师名放进 query。
+
+## 参数
+- query: 自然语言画面描述。推荐使用中文。
+- search_mode: 搜索策略。**默认是 "full_scene"；除非用户明确想探索多种候选，否则保持默认。**
+    "full_scene"       — **默认。** 用户给出具体画面描述时使用：场景、主体、服装、姿势、动作、
+                         背景等，不管描述多长、元素多少。用户想要的是一张图的一组连贯提示词。
                          (e.g. "一个穿着白色水手服的少女在雨中奔跑", "金发双马尾女孩坐在教室窗边看书，夕阳",
                               "芙兰朵露 金发 辫子 发带 连衣裙 围裙 灯笼裤")
-    "concept_explore"  — **ONLY for open-ended browsing**, when the user wants to SEE A VARIETY of options for a
-                         vague/single concept and pick from them — i.e. "show me what kinds of X exist".
-                         Returns up to 80 candidates → high token cost. Do NOT use just because a description has
-                         many elements; a detailed scene is still "full_scene".
+    "concept_explore"  — **只用于开放式概念浏览。** 当用户想看某个模糊/单一概念有哪些类型、
+                         想从大量候选中挑选时使用。会返回最多 80 个候选，token 成本较高。
+                         不要因为描述元素多就使用此模式；详细场景仍然属于 "full_scene"。
                          (e.g. "各种各样的汉服", "兔耳朵都有哪些", "赛博朋克服装有什么风格")
-    "subject_describe" — **WARNING: Only for describing ONE single visual concept.** Tokenizer is DISABLED in this
-                         mode, so it cannot parse multi-element queries. If the query contains a character name +
-                         attributes (e.g. "芙兰朵露 金发 连衣裙"), multiple clothing items, or any combination of
-                         visual elements, you MUST use "full_scene" instead.
-                         Valid use cases: "EVA中蓝发的驾驶员" (single character concept), "灯笼裤" (single item),
-                         "两侧有开口，前方有拉绳的运动短裤" (single item with details).
-    "precise_lookup"   — Precise lookup / spell fix (e.g. "selafuku", "thighhigh")
-- DECISION RULE: Does the user want one specific picture (→ full_scene) or to browse many options for a concept
-  (→ concept_explore)? A long, multi-element description still maps to full_scene — element count is NOT the signal,
-  exploratory intent is.
-- CRITICAL: "subject_describe" is ONLY for queries about a SINGLE visual concept (one item, one attribute, one character
-  type). Any query with a character name + attributes, multiple items, or a scene description MUST use "full_scene".
-  When in doubt, use "full_scene" — it handles all concrete image descriptions correctly.
-- category: Filter to a specific tag category. Default "all".
-    "all"       — All (通用 + 版权 + 人物)
-    "general"   — Visual attributes, clothing, pose, background, etc.
-    "character" — Named characters from any series
-    "copyright" — Specific anime/game/franchise titles
-- show_nsfw: Include NSFW tags. Default True.
-- include_wiki: Append wiki description to each result. Default False.
-    Set True when tags are unfamiliar and need disambiguation.
+    "subject_describe" — **只用于描述一个单一视觉概念。** 此模式关闭分词，不能解析多元素 query。
+                         如果 query 包含角色名 + 属性、多个服装物件、或任何组合场景，应使用
+                         "full_scene"。
+                         适合："EVA中蓝发的驾驶员"（单一角色概念）、"灯笼裤"（单一物件）、
+                         "两侧有开口，前方有拉绳的运动短裤"（带细节的单一物件）。
+    "precise_lookup"   — 精确查词 / 拼写纠错，例如 "selafuku"、"thighhigh"。
+- 判断规则：用户是想得到一张具体图的提示词（→ full_scene），还是想浏览某个概念的多种候选
+  （→ concept_explore）？元素数量不是判断依据，探索意图才是。
+- 重要：只要 query 是具体场景、多元素组合、角色 + 属性，就用 "full_scene"。拿不准时也用
+  "full_scene"，它能处理具体画面描述。
+- category: 限定搜索类别。默认 "all"。
+    "all"       — 全部（通用 + 作品 + 角色）
+    "general"   — 可见属性、服装、姿势、背景等通用标签
+    "character" — 角色标签
+    "copyright" — 动画/游戏/作品名等版权标签
+- show_nsfw: 是否包含 NSFW 标签。默认 True。
+- include_wiki: 是否在结果中附带 wiki 说明。默认 False。
+    当标签含义不熟悉、需要消歧时设为 True。
 
-## Query writing guide
+## query 写法建议
 
-Use **spaces, newlines, Chinese commas (，), or Chinese dunhao (、)** to manually separate concepts.
-Each delimiter-bounded segment ≤7 characters stays atomic — the engine respects your intent.
+可以使用**空格、换行、中文逗号（，）、顿号（、）**手动分隔概念。
+被分隔符包围且长度不超过 7 个汉字的片段会尽量保持原子性，搜索引擎会尊重你的拆分意图。
 
-| Query style | Example |
+| 写法 | 示例 |
 |---|---|
-| Concept list (spaces) | `运动社团 校队 比赛 运动会` |
-| Concept list (dun hao) | `反乌托邦、赛博朋克、蒸汽朋克` |
-| Natural sentence | `一个穿着白色水手服的少女在雨中奔跑` |
-| Mixed | `运动社团 一个穿水手服的少女` |
+| 空格分隔概念 | `运动社团 校队 比赛 运动会` |
+| 顿号分隔概念 | `反乌托邦、赛博朋克、蒸汽朋克` |
+| 自然句子 | `一个穿着白色水手服的少女在雨中奔跑` |
+| 混合写法 | `运动社团 一个穿水手服的少女` |
 
-## Workflow
+## 工作流
 
-After search_tags, pass selected tags to get_related_tags to discover complementary tags via co-occurrence.
-Chain freely: search_tags → get_related_tags → get_related_tags → search_tags for multi-hop exploration.
+调用 search_tags 后，可以把选中的标签传给 get_related_tags，通过共现关系发现互补标签。
+可按 search_tags → get_related_tags → get_related_tags → search_tags 多跳探索。
 
-## Returns
+## 返回
 
-JSON with: prompt (comma-separated tags), keywords, results.
-Each result: tag, cn_name[, wiki if include_wiki=True].
+JSON 对象，包含 prompt（逗号分隔 tag）、keywords、results。
+每个 result 包含 tag、cn_name；当 include_wiki=True 时额外包含 wiki。
     """
     _SEARCH_MODE_PRESETS: dict[str, dict] = {
         "precise_lookup":   {"top_k": 10, "limit": 10, "popularity_weight": 0.15, "use_segmentation": False, "group_mode": "off",    "max_per_group": 2},
@@ -218,91 +243,63 @@ async def get_related_tags(
     include_wiki: bool = False,
 ) -> str:
     """
-Return co-occurrence-based tag recommendations for a given tag list (NPMI scoring).
-Only supported for general, copyright, and character tag searches; **artists and meta tags are not supported.**
+根据已给定的 Danbooru 标签列表，返回基于 NPMI 共现评分的关联标签推荐。
+本工具只支持通用标签、作品标签、角色标签；**不支持画师标签和 meta 标签。**
 
-This tool surfaces tags that frequently appear alongside the seeds in
-Danbooru, mixing categories (General / Character / Copyright) by design.
+不要用本工具搜索画师名、画师风格、creator/artist lookup，也不要用它验证某个画师标签是否存在。
+如果用户询问某个具体画师常画什么，或询问画师风格参考，应使用 get_artist_profile。
 
-## Typical use cases
+本工具会找出在 Danbooru 中经常与种子标签共同出现的标签。结果会按设计混合
+General / Character / Copyright 类别。
 
-- Attribute → characters who have it
-  e.g. ["fingerless_gloves"] → tifa_lockhart, cammy_white, bridget_(guilty_gear), ...
-- Work → characters in it
-  e.g. ["overlord_(maruyama)"] → shalltear_bloodfallen, ainz_ooal_gown, albedo_(overlord), ...
-- Character → their visual attributes
-  e.g. ["amiya_(arknights)"] → outfits, expressions, accessories
-- Theme exploration
-  e.g. ["fighter_jet"] → aircraft types, actions, backgrounds
-- Multi-tag intersection
-  e.g. ["maid", "twintails"] → tags specific to the combination, scored by summed NPMI
+## 典型用法
 
-For within-category exploration (e.g. "more clothing tags like X"), use search_tags
-with the `category` parameter instead.
+- 属性 → 拥有该属性的角色
+  例如 ["fingerless_gloves"] → tifa_lockhart, cammy_white, bridget_(guilty_gear), ...
+- 作品 → 作品中的角色
+  例如 ["overlord_(maruyama)"] → shalltear_bloodfallen, ainz_ooal_gown, albedo_(overlord), ...
+- 角色 → 该角色常见视觉属性
+  例如 ["amiya_(arknights)"] → 服装、表情、配饰等
+- 主题探索
+  例如 ["fighter_jet"] → 飞机类型、动作、背景等
+- 多标签交集
+  例如 ["maid", "twintails"] → 与该组合强相关的标签，按聚合 NPMI 评分排序
 
-## Workflow
+如果要做同类别内部探索，例如“更多类似 X 的服装标签”，请使用 search_tags 并设置 category。
 
-Chain freely: search_tags → get_related_tags → get_related_tags → search_tags.
-Each hop along the co-occurrence graph reveals tags unreachable by semantic search alone.
+## 工作流
 
-## Args
+可按 search_tags → get_related_tags → get_related_tags → search_tags 链式调用。
+沿共现图多跳探索时，可以发现单纯语义搜索不容易召回的标签。
 
-- tags: List of canonical Danbooru tag names (underscores, no spaces).
-        e.g. ["white_serafuku", "sailor_collar"]
-- limit: Max recommendations returned. Default 50.
-- show_nsfw: Include NSFW tags. Default True.
-- include_wiki: Append wiki description to each result. Default False.
-        Set True when result tags are unfamiliar and need disambiguation.
+## 参数
 
-## Returns
+- tags: canonical Danbooru tag 名列表，使用下划线，不使用空格。
+        例如 ["white_serafuku", "sailor_collar"]
+- limit: 最多返回的推荐数量。默认 50。
+- show_nsfw: 是否包含 NSFW 标签。默认 True。
+- include_wiki: 是否在结果中附带 wiki 说明。默认 False。
+        当结果标签不熟悉、需要消歧时设为 True。
 
-JSON array sorted by aggregated NPMI score (descending). Each result:
+## 返回
+
+JSON 对象，results 按聚合 NPMI 分数降序排序。每个结果包含：
 - tag, cn_name
-- sources: seed tags that contributed to this score
-- wiki: only if include_wiki=True
+- sources: 对该推荐有贡献的种子标签
+- wiki: 仅当 include_wiki=True 时返回
     """
     tagger = await DanbooruTagger.get_instance()
 
-    # ── 检查标签是否存在，不存在则尝试 search_tags 纠错 ──────────────────
-    valid_tags = []
-    invalid_tags = []
-    for t in tags:
-        if t in tagger._name_to_idx:
-            valid_tags.append(t)
-        else:
-            invalid_tags.append(t)
+    corrected_tags, invalid_tags, corrections, candidates = _resolve_canonical_tags(tagger, tags)
 
-    corrections = {}
-    if invalid_tags:
-        for bad_tag in invalid_tags:
-            try:
-                req = SearchRequest(
-                    query=bad_tag,
-                    top_k=5,
-                    limit=5,
-                    popularity_weight=0.15,
-                    use_segmentation=False,
-                    target_layers=['英文']
-                )
-                resp = await tagger.search_async(req)
-                if resp.results:
-                    corrections[bad_tag] = resp.results[0].tag
-            except Exception:
-                pass
-
-    if not valid_tags and not corrections:
-        return json.dumps({
+    if not corrected_tags:
+        payload = {
             "error": "所有传入的标签均不存在于标签表中",
             "invalid_tags": invalid_tags,
-        }, ensure_ascii=False, indent=2)
-
-    # 用纠错后的标签替换无效标签
-    corrected_tags = []
-    for t in tags:
-        if t in valid_tags:
-            corrected_tags.append(t)
-        elif t in corrections:
-            corrected_tags.append(corrections[t])
+        }
+        if candidates:
+            payload["candidates"] = candidates
+        return json.dumps(payload, ensure_ascii=False, indent=2)
 
     results = await tagger.get_related_async(
         corrected_tags,
@@ -349,73 +346,45 @@ async def get_artist_recommendations(
     show_nsfw: bool = True,
 ) -> str:
     """
-    Recommend artists who are skilled at drawing the given tags, based on NPMI co-occurrence data.
+    根据标签-画师 NPMI 共现数据，推荐擅长绘制给定标签的画师。
 
-    Given a list of Danbooru tags (e.g. character names, clothing, styles), this tool returns
-    artists whose works frequently co-occur with those tags on Danbooru, ranked by aggregated
-    NPMI score.
+    输入一组 canonical Danbooru 标签（例如角色名、服装、主题、视觉元素），本工具会返回作品中
+    经常与这些标签共同出现的画师，并按聚合 NPMI 分数排序。
 
-    ## Args
-    - tags: List of canonical Danbooru tag names (underscores, no spaces).
-            e.g. ["1girl", "blue_hair", "school_uniform"]
-    - limit: Max artists returned. Default 30.
-    - min_cooc: Minimum co-occurrence count per (tag, artist) pair to consider. Default 3.
-    - show_nsfw: Include NSFW artist data. Default True.
+    本工具用于 tag → artist 推荐。输入必须是 canonical Danbooru tag 名，不是画师名。
+    不要用本工具查询某个具体画师；画师 → 常见标签应使用 get_artist_profile。
 
-    ## Returns
+    ## 参数
+    - tags: canonical Danbooru tag 名列表，使用下划线，不使用空格。
+            例如 ["1girl", "blue_hair", "school_uniform"]
+    - limit: 最多返回的画师数量。默认 30。
+    - min_cooc: 单个 (tag, artist) 组合进入计算所需的最小共现次数。默认 3。
+    - show_nsfw: 是否包含 NSFW 画师数据。默认 True。
 
-    JSON array sorted by NPMI score (descending). Each result:
-    - artist: Danbooru artist tag name
-    - cooc_count: Total co-occurrence count across all input tags
-    - post_count: Artist's total post count on Danbooru
-    - sources: Input tags that matched this artist
-    - top_tags: Top 10 tags this artist most frequently draws (with Chinese names)
+    ## 返回
+
+    JSON 对象，results 按 NPMI 分数降序排序。每个结果包含：
+    - artist: Danbooru 画师 tag 名
+    - cooc_count: 所有输入标签上的累计共现次数
+    - post_count: 该画师在 Danbooru 的作品数
+    - sources: 命中该画师的输入标签
+    - top_tags: 该画师最常画的前 10 个标签（带中文名）
     """
     tagger = await DanbooruTagger.get_instance()
 
     if not tags:
         return json.dumps({"error": "tags 列表不能为空"}, ensure_ascii=False, indent=2)
 
-    # ── 检查标签是否存在，不存在则尝试 search_tags 纠错 ──────────────────
-    valid_tags = []
-    invalid_tags = []
-    for t in tags:
-        if t in tagger._name_to_idx:
-            valid_tags.append(t)
-        else:
-            invalid_tags.append(t)
+    corrected_tags, invalid_tags, corrections, candidates = _resolve_canonical_tags(tagger, tags)
 
-    corrections = {}
-    if invalid_tags:
-        for bad_tag in invalid_tags:
-            try:
-                req = SearchRequest(
-                    query=bad_tag,
-                    top_k=5,
-                    limit=5,
-                    popularity_weight=0.15,
-                    use_segmentation=False,
-                    target_layers=['英文']
-                )
-                resp = await tagger.search_async(req)
-                if resp.results:
-                    corrections[bad_tag] = resp.results[0].tag
-            except Exception:
-                pass
-
-    if not valid_tags and not corrections:
-        return json.dumps({
+    if not corrected_tags:
+        payload = {
             "error": "所有传入的标签均不存在于标签表中",
             "invalid_tags": invalid_tags,
-        }, ensure_ascii=False, indent=2)
-
-    # 用纠错后的标签替换无效标签
-    corrected_tags = []
-    for t in tags:
-        if t in valid_tags:
-            corrected_tags.append(t)
-        elif t in corrections:
-            corrected_tags.append(corrections[t])
+        }
+        if candidates:
+            payload["candidates"] = candidates
+        return json.dumps(payload, ensure_ascii=False, indent=2)
 
     results = await tagger.search_artists_by_tags_async(
         corrected_tags, limit=limit, min_cooc=min_cooc,
@@ -454,6 +423,56 @@ async def get_artist_recommendations(
         }
 
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def get_artist_profile(
+    artist_name: str,
+    top_n: int = 20,
+    show_nsfw: bool = True,
+) -> str:
+    """
+在画师-标签共现数据库中查询单个 Danbooru 画师，并返回该画师常见共现标签。
+
+当用户询问某个具体画师或画师风格参考时使用本工具，例如：
+"Mika Pikazo style"、"画师 mika_pikazo"、"by redjuice"、"这个画师常画什么"。
+本工具查询的是画师数据库，不是普通视觉 tag 搜索索引。
+
+画师名会在查询前自动规范化。因此，当数据库中存在 "mika_pikazo" 时，
+"Mika Pikazo"、"mika pikazo"、"mika_pikazo"、"MikaPikazo" 都可以解析到它。
+
+## 参数
+- artist_name: 画师名或 Danbooru 画师 tag。允许大小写差异和空格。
+- top_n: 最多返回的常见标签数量。默认 20。
+- show_nsfw: 是否包含 NSFW 常见标签。默认 True。
+
+## 返回
+
+JSON 对象，包含：
+- artist: 解析后的 canonical Danbooru 画师 tag
+- input: 原始输入
+- matched_by: 匹配方式，可能是 exact / normalized_exact / compact_exact / fuzzy
+- post_count: 该画师在共现数据库中的作品数
+- top_tags: 常见共现标签列表，每项只包含 tag 和 cn_name
+- note: 说明这些常见标签只能作为风格参考，不等于完整画风语义描述
+
+如果没有找到唯一画师，会返回 artist_not_found 和候选画师名。这不代表该画师 tag 在 Danbooru
+不存在，也不要改用 search_tags 验证画师名。
+    """
+    tagger = await DanbooruTagger.get_instance()
+    profile = tagger.get_artist_profile(
+        artist_name,
+        top_n=max(1, min(int(top_n), 100)),
+        show_nsfw=show_nsfw,
+    )
+
+    await counter.increment()
+    await counter.increment_mcp()
+    if "error" not in profile:
+        await counter.increment_success()
+        await counter.increment_copy()
+
+    return json.dumps(profile, ensure_ascii=False, indent=2)
 
 
 # ── Anima 提示词格式说明 ─────────────────────────────────────────────────

@@ -12,6 +12,7 @@ DanbooruTagger 核心引擎
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import os
 import re
@@ -215,6 +216,7 @@ class DanbooruTagger:
         self._group_cn_names: dict[str, str]                      = {}
         self._tag_artist_index: dict[str, list[tuple]]           = {}
         self._artist_top_tags: dict[str, list[tuple]]            = {}  # artist → [(tag, npmi, cn_short), ...]
+        self._artist_post_count: dict[str, int]                  = {}
         self.is_loaded:     bool                                  = False
 
         # 预提取的列数组，避免热点路径上反复执行 df.iloc[idx]
@@ -1323,6 +1325,182 @@ class DanbooruTagger:
             result[artist] = items
         return result
 
+    @staticmethod
+    def _normalize_artist_name(name: str) -> str:
+        """Normalize user-entered artist names toward Danbooru tag form."""
+        text = str(name or "").strip().lower()
+        if text.startswith("@"):
+            text = text[1:].strip()
+        text = re.sub(r"[\s\-]+", "_", text)
+        text = re.sub(r"_+", "_", text)
+        return text.strip("_")
+
+    @staticmethod
+    def _compact_artist_key(name: str) -> str:
+        return re.sub(r"[\W_]+", "", str(name or "").lower())
+
+    def resolve_artist_name(self, artist_name: str) -> dict[str, Any]:
+        """Resolve a user-entered artist name to the artist co-occurrence index."""
+        artists = set(self._artist_top_tags.keys())
+        normalized = self._normalize_artist_name(artist_name)
+
+        if artist_name in artists:
+            return {
+                "artist": artist_name,
+                "matched_by": "exact",
+                "candidates": [],
+            }
+
+        if normalized in artists:
+            return {
+                "artist": normalized,
+                "matched_by": "normalized_exact",
+                "candidates": [],
+            }
+
+        compact_query = self._compact_artist_key(artist_name)
+        compact_map: dict[str, list[str]] = {}
+        for artist in artists:
+            compact_map.setdefault(self._compact_artist_key(artist), []).append(artist)
+        compact_matches = compact_map.get(compact_query, [])
+        if len(compact_matches) == 1:
+            return {
+                "artist": compact_matches[0],
+                "matched_by": "compact_exact",
+                "candidates": [],
+            }
+        if len(compact_matches) > 1:
+            return {
+                "artist": None,
+                "matched_by": "ambiguous_compact",
+                "candidates": sorted(compact_matches)[:10],
+            }
+
+        close = difflib.get_close_matches(normalized, sorted(artists), n=5, cutoff=0.78)
+        if len(close) == 1:
+            return {
+                "artist": close[0],
+                "matched_by": "fuzzy",
+                "candidates": close,
+            }
+        return {
+            "artist": None,
+            "matched_by": "not_found",
+            "candidates": close,
+        }
+
+    def resolve_tag_name(self, tag_name: str) -> dict[str, Any]:
+        """Resolve a user-entered tag name to the canonical tag index without semantic search."""
+        tags = set(self._name_to_idx.keys())
+        normalized = self._normalize_artist_name(tag_name)
+
+        if tag_name in tags:
+            return {
+                "tag": tag_name,
+                "matched_by": "exact",
+                "candidates": [],
+            }
+
+        if normalized in tags:
+            return {
+                "tag": normalized,
+                "matched_by": "normalized_exact",
+                "candidates": [],
+            }
+
+        plural = f"{normalized}s"
+        if plural in tags:
+            return {
+                "tag": plural,
+                "matched_by": "plural_exact",
+                "candidates": [],
+            }
+        if normalized.endswith("s") and normalized[:-1] in tags:
+            return {
+                "tag": normalized[:-1],
+                "matched_by": "singular_exact",
+                "candidates": [],
+            }
+
+        compact_query = self._compact_artist_key(tag_name)
+        compact_map: dict[str, list[str]] = {}
+        for tag in tags:
+            compact_map.setdefault(self._compact_artist_key(tag), []).append(tag)
+        compact_matches = compact_map.get(compact_query, [])
+        if len(compact_matches) == 1:
+            return {
+                "tag": compact_matches[0],
+                "matched_by": "compact_exact",
+                "candidates": [],
+            }
+        if len(compact_matches) > 1:
+            return {
+                "tag": None,
+                "matched_by": "ambiguous_compact",
+                "candidates": sorted(compact_matches)[:10],
+            }
+
+        close = difflib.get_close_matches(normalized, sorted(tags), n=5, cutoff=0.78)
+        if len(close) == 1:
+            return {
+                "tag": close[0],
+                "matched_by": "fuzzy",
+                "candidates": close,
+            }
+        return {
+            "tag": None,
+            "matched_by": "not_found",
+            "candidates": close,
+        }
+
+    def get_artist_profile(self, artist_name: str, top_n: int = 20,
+                           show_nsfw: bool = True) -> dict[str, Any]:
+        """Return a resolved artist and their common co-occurring tags."""
+        resolved = self.resolve_artist_name(artist_name)
+        artist = resolved["artist"]
+        if not artist:
+            return {
+                "error": "artist_not_found",
+                "input": artist_name,
+                "matched_by": resolved["matched_by"],
+                "candidates": resolved["candidates"],
+                "message": (
+                    "未在画师共现库中找到唯一画师；这不代表 Danbooru 标签不存在，"
+                    "也不应使用 search_tags 验证画师名。"
+                ),
+            }
+
+        top_tags: list[dict[str, str]] = []
+        for tag, _npmi, _cooc in self._artist_top_tags.get(artist, []):
+            if len(top_tags) >= top_n:
+                break
+            if not show_nsfw and self._name_to_idx is not None and tag in self._name_to_idx:
+                idx = self._name_to_idx[tag]
+                if self._arr_nsfw is not None and self._arr_nsfw[idx] == '1':
+                    continue
+
+            cn_short = ""
+            if self._name_to_idx is not None and tag in self._name_to_idx:
+                idx = self._name_to_idx[tag]
+                cn_full = str(self._arr_cn_name[idx]) if self._arr_cn_name is not None else ""
+                cn_short = cn_full.split(',')[0].strip() if cn_full else ""
+            top_tags.append({
+                "tag": tag,
+                "cn_name": cn_short,
+            })
+
+        return {
+            "artist": artist,
+            "input": artist_name,
+            "matched_by": resolved["matched_by"],
+            "post_count": self._artist_post_count.get(artist, 0),
+            "top_tags": top_tags,
+            "note": (
+                "这些是该画师作品中常共现的标签，可作为风格参考；"
+                "不是对画风的完整语义描述。"
+            ),
+        }
+
     def search_artists_pipeline(
         self,
         query: str,
@@ -1506,12 +1684,17 @@ class DanbooruTagger:
 
             # 构建反向索引：artist → top tags（按 NPMI 降序）
             artist_tags: dict[str, list[tuple]] = {}
+            artist_post_count: dict[str, int] = {}
             for tag, entries in index.items():
-                for artist, npmi, cooc, _ in entries:
+                for artist, npmi, cooc, artist_pc in entries:
                     artist_tags.setdefault(artist, []).append((tag, npmi, cooc))
+                    artist_post_count[artist] = max(
+                        artist_post_count.get(artist, 0), artist_pc,
+                    )
             for artist, entries in artist_tags.items():
                 entries.sort(key=lambda x: -x[1])
             self._artist_top_tags = artist_tags
+            self._artist_post_count = artist_post_count
 
             print(
                 f'[Engine] 标签-画师共现表加载完成，{len(index):,} 个标签，'
