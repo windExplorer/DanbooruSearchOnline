@@ -396,6 +396,29 @@ class DanbooruTagger:
         if cached is not None:
             return cached
 
+        tag_results, keywords, extra_segments, cached_queries = self._search_tag_results(request)
+        artist_results = (
+            self.search_artist_rows(request.query, request.limit, show_nsfw=request.show_nsfw)
+            if "artist" in request.target_layers else []
+        )
+        if artist_results:
+            artist_tags = {r.tag for r in artist_results}
+            tag_results = [r for r in tag_results if r.tag not in artist_tags]
+        valid = artist_results + tag_results
+
+        tags_all = ', '.join(r.tag for r in valid)
+        tags_sfw = ', '.join(r.tag for r in valid if r.nsfw != '1')
+        response = SearchResponse(
+            tags_all=tags_all, tags_sfw=tags_sfw,
+            results=valid, keywords=keywords, segments=extra_segments,
+            cached_queries=cached_queries,
+        )
+        self._search_cache.put(cache_key, response)
+        return response
+
+    def _search_tag_results(
+        self, request: SearchRequest,
+    ) -> tuple[list[TagResult], list[str], list[str], list[str]]:
         if request.use_segmentation:
             raw_kw, raw_segments = self._smart_split(request.query)
             keywords = [w.strip() for w in raw_kw if w.strip() and w.strip() not in STOP_WORDS]
@@ -554,16 +577,8 @@ class DanbooruTagger:
                 if len(valid) < request.limit or r.tag in guaranteed_tags:
                     valid.append(r)
 
-        tags_all = ', '.join(r.tag for r in valid)
-        tags_sfw = ', '.join(r.tag for r in valid if r.nsfw != '1')
         cached_queries = [q for q, hit in zip(queries, hit_mask) if hit]
-        response = SearchResponse(
-            tags_all=tags_all, tags_sfw=tags_sfw,
-            results=valid, keywords=keywords, segments=extra_segments,
-            cached_queries=cached_queries,
-        )
-        self._search_cache.put(cache_key, response)
-        return response
+        return valid, keywords, extra_segments, cached_queries
 
     # ── CPU 并发闸门（类级信号量，所有 CPU 密集型操作共享）───────────────
 
@@ -1338,6 +1353,68 @@ class DanbooruTagger:
     @staticmethod
     def _compact_artist_key(name: str) -> str:
         return re.sub(r"[\W_]+", "", str(name or "").lower())
+
+    @staticmethod
+    def _edit_distance_at_most_one(left: str, right: str) -> bool:
+        if left == right:
+            return True
+        if abs(len(left) - len(right)) > 1:
+            return False
+
+        if len(left) == len(right):
+            mismatches = 0
+            for a, b in zip(left, right):
+                if a != b:
+                    mismatches += 1
+                    if mismatches > 1:
+                        return False
+            return True
+
+        short, long = (left, right) if len(left) < len(right) else (right, left)
+        i = j = edits = 0
+        while i < len(short) and j < len(long):
+            if short[i] == long[j]:
+                i += 1
+                j += 1
+                continue
+            edits += 1
+            if edits > 1:
+                return False
+            j += 1
+        return True
+
+    def search_artist_rows(
+        self, query: str, limit: int = 20, show_nsfw: bool = True,
+    ) -> list[TagResult]:
+        """Return artist rows whose normalized name is within edit distance 1."""
+        normalized = self._normalize_artist_name(query)
+        compact_query = self._compact_artist_key(normalized)
+        if not compact_query:
+            return []
+
+        matches: list[TagResult] = []
+        for artist in sorted(self._artist_top_tags.keys()):
+            if not self._edit_distance_at_most_one(compact_query, self._compact_artist_key(artist)):
+                continue
+            top_tags = self.get_artist_top_tags(
+                [artist], top_n=10, show_nsfw=show_nsfw,
+            ).get(artist, [])
+            matches.append(TagResult(
+                tag=artist,
+                cn_name="画师标签",
+                category="Artist",
+                nsfw="0",
+                final_score=1.0,
+                semantic_score=1.0,
+                count=int(self._artist_post_count.get(artist, 0)),
+                source=query,
+                layer="artist",
+                wiki="",
+                artist_top_tags=top_tags,
+            ))
+
+        matches.sort(key=lambda r: (r.count, r.tag), reverse=True)
+        return matches[:limit]
 
     def resolve_artist_name(self, artist_name: str) -> dict[str, Any]:
         """Resolve a user-entered artist name to the artist co-occurrence index."""

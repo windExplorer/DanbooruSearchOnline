@@ -207,7 +207,7 @@ class DanbooruSearchUI:
         self.spinner = None
         self.search_btn = None
 
-        self.selected_layers = {'英文': True, '中文扩展词': True, '释义': True, '中文核心词': True}
+        self.selected_layers = {'英文': True, '中文扩展词': True, '释义': True, '中文核心词': True, 'artist': True}
         self.selected_cats = {'General': True, 'Copyright': True, 'Character': True}
 
         self.bad_case_btn = None
@@ -229,6 +229,8 @@ class DanbooruSearchUI:
         self._artist_rec_checkboxes: dict[str, ui.checkbox] = {}
         # 当前推荐画师的标签名集合（用于 Anima 模式复制时加 @ 前缀）
         self._current_artist_rec_tags: set[str] = set()
+        self._artist_result_tags: set[str] = set()
+        self._last_recommendation_seed_tags: list[str] = []
 
         # 高级选项中各层/类型的 checkbox 引用，用于 restore 时同步控件状态
         self._layer_checkboxes: dict[str, ui.checkbox] = {}
@@ -739,8 +741,9 @@ class DanbooruSearchUI:
                             display_map = {
                                 '英文': '英文标签', '中文扩展词': '中文扩展词',
                                 '释义': '维基释义', '中文核心词': '中文核心词',
+                                'artist': 'artist',
                             }
-                            for layer in ['英文', '中文扩展词', '释义', '中文核心词']:
+                            for layer in ['英文', '中文扩展词', '释义', '中文核心词', 'artist']:
                                 cb = ui.checkbox(
                                     display_map.get(layer, layer), value=True,
                                     on_change=lambda e, l=layer: self.selected_layers.__setitem__(l, e.value)
@@ -981,6 +984,8 @@ class DanbooruSearchUI:
             self.result_table.selected = []
         self._artist_rec_checkboxes.clear()
         self._current_artist_rec_tags.clear()
+        self._artist_result_tags.clear()
+        self._last_recommendation_seed_tags = []
         self._render_selected_chips()
         if self.selection_count_label is not None:
             self.selection_count_label.text = '0'
@@ -1025,6 +1030,7 @@ class DanbooruSearchUI:
                           :class="props.row._nsfw_blocked ? 'nsfw-row-blocked' : ''"
                           :style="{
                               'background-color':
+                                  props.row.layer === 'artist'       ? 'rgba(244,114,182,0.08)' :
                                   props.row.category === 'General'   ? 'rgba(59,130,246,0.06)' :
                                   props.row.category === 'Character' ? 'rgba(34,197,94,0.06)'  :
                                   props.row.category === 'Copyright' ? 'rgba(168,85,247,0.06)' : ''
@@ -1036,7 +1042,7 @@ class DanbooruSearchUI:
                         <q-td v-for="col in props.cols" :key="col.name" :props="props">
                             <template v-if="col.name === 'tag' || col.name === 'cn_name'">
                                 <div :class="props.row._nsfw_blocked ? 'nsfw-blur-cell' : ''">
-                                    <template v-if="col.name === 'cn_name' && col.value">
+                                    <template v-if="col.name === 'cn_name' && col.value && props.row.layer !== 'artist'">
                                         <span style="font-size:14px;display:inline-flex;align-items:center;gap:4px;">
                                             <span>{{ col.value.split(',')[0] }}</span>
                                             <q-btn icon="report_problem"
@@ -1073,7 +1079,17 @@ class DanbooruSearchUI:
                             </template>
                             <template v-else>{{ col.value }}</template>
                         </q-td>
-                        <q-tooltip v-if="(props.row.wiki || props.row.cn_name) && !props.row._nsfw_blocked"
+                        <q-tooltip v-if="props.row.layer === 'artist' && props.row.artist_top_tags && props.row.artist_top_tags.length && !props.row._nsfw_blocked"
+                            content-class="bg-black text-white shadow-4"
+                            max-width="400px" :offset="[10,10]">
+                            <div style="font-size:14px;line-height:1.5;max-width:380px;">
+                                <b>{{ props.row.tag }}</b><br>这位画师经常画:<br>
+                                <template v-for="tag in props.row.artist_top_tags.slice(0, 10)" :key="tag">
+                                    &nbsp;&nbsp;· {{ tag }}<br>
+                                </template>
+                            </div>
+                        </q-tooltip>
+                        <q-tooltip v-else-if="(props.row.wiki || props.row.cn_name) && !props.row._nsfw_blocked"
                             content-class="bg-black text-white shadow-4"
                             max-width="500px" :offset="[10,10]">
                             <div style="font-size:14px;line-height:1.5;">
@@ -1353,6 +1369,7 @@ class DanbooruSearchUI:
                 return
 
             table_data = [result_to_row(r, show_nsfw_val) for r in response.results]
+            self._artist_result_tags = {row['tag'] for row in table_data if row.get('layer') == 'artist'}
             self.full_table_data = table_data
             self.full_tags_str = response.tags_all
             self.full_tags_str_sfw = response.tags_sfw
@@ -1372,6 +1389,7 @@ class DanbooruSearchUI:
             self._save_staged_tags()
 
             self._refresh_related([], show_nsfw_val)
+            self._last_recommendation_seed_tags = []
 
             # 分词筛选 chips
             self.current_filter_keyword = 'ALL'
@@ -1436,6 +1454,26 @@ class DanbooruSearchUI:
         extra = [t for t in self.chip_extra_selected if t not in seen]
         return table_tags + extra
 
+    def _get_recommendation_seed_tags(self, selected_tags: list[str]) -> list[str]:
+        artist_tags = set(self._current_artist_rec_tags) | set(self._artist_result_tags)
+        if self.result_table is not None:
+            for row in self.result_table.rows:
+                if row.get('layer') != 'artist':
+                    continue
+                tag = row.get('tag')
+                if tag:
+                    artist_tags.add(tag)
+        return [tag for tag in selected_tags if tag not in artist_tags]
+
+    def _refresh_recommendations_if_seed_changed(self, selected_tags: list[str], show_nsfw: bool):
+        seed_tags = self._get_recommendation_seed_tags(selected_tags)
+        if seed_tags == self._last_recommendation_seed_tags:
+            return
+        self._last_recommendation_seed_tags = list(seed_tags)
+        self._refresh_related_from_selection(seed_tags, show_nsfw)
+        self._refresh_group_from_selection(seed_tags, show_nsfw)
+        self._refresh_artist_from_selection(seed_tags, show_nsfw)
+
     def _set_selected_tags(self, tags: list[str], skip_refresh: bool = False):
         tag_set = set(tags)
         table_tag_set = {row['tag'] for row in self.result_table.rows} if self.result_table else set()
@@ -1463,9 +1501,7 @@ class DanbooruSearchUI:
         # 从关联推荐/同类标签勾选时跳过，由各自动态刷新或手动按钮触发。
         if not skip_refresh:
             show_nsfw_val = self.input_nsfw.value
-            self._refresh_related_from_selection(all_tags, show_nsfw_val)
-            self._refresh_group_from_selection(all_tags, show_nsfw_val)
-            self._refresh_artist_from_selection(all_tags, show_nsfw_val)
+            self._refresh_recommendations_if_seed_changed(all_tags, show_nsfw_val)
             if not all_tags:
                 self.chip_extra_selected.clear()
 
@@ -1493,9 +1529,7 @@ class DanbooruSearchUI:
             cb.set_value(t in tag_set)
 
         show_nsfw_val = self.input_nsfw.value
-        self._refresh_related_from_selection(all_tags, show_nsfw_val)
-        self._refresh_group_from_selection(all_tags, show_nsfw_val)
-        self._refresh_artist_from_selection(all_tags, show_nsfw_val)
+        self._refresh_recommendations_if_seed_changed(all_tags, show_nsfw_val)
         if not all_tags:
             self.chip_extra_selected.clear()
         self._save_staged_tags()
@@ -1605,6 +1639,7 @@ class DanbooruSearchUI:
 
     def _refresh_related_from_selection(self, selected_tags: list[str], show_nsfw: bool):
         """仅刷新关联推荐列表（300ms 去抖，避免快速勾选产生 CPU 洪峰）。"""
+        selected_tags = self._get_recommendation_seed_tags(selected_tags)
         # 取消上次未执行的刷新
         if self._debounce_related_task and not self._debounce_related_task.done():
             self._debounce_related_task.cancel()
@@ -1625,6 +1660,7 @@ class DanbooruSearchUI:
 
     def _refresh_group_from_selection(self, selected_tags: list[str], show_nsfw: bool):
         """仅刷新同类扩展区域（300ms 去抖，避免快速勾选产生 CPU 洪峰）。"""
+        selected_tags = self._get_recommendation_seed_tags(selected_tags)
         if self._debounce_group_task and not self._debounce_group_task.done():
             self._debounce_group_task.cancel()
         async def _do():
@@ -1645,6 +1681,7 @@ class DanbooruSearchUI:
 
     def _refresh_artist_from_selection(self, selected_tags: list[str], show_nsfw: bool = True):
         """根据已选标签刷新画师推荐（300ms 去抖）。"""
+        selected_tags = self._get_recommendation_seed_tags(selected_tags)
         if self._debounce_artist_task and not self._debounce_artist_task.done():
             self._debounce_artist_task.cancel()
         async def _do():
@@ -1888,9 +1925,10 @@ class DanbooruSearchUI:
         self._mark_interaction()
         tags = self._get_selected_tags()
         parts = []
+        artist_tags = set(self._current_artist_rec_tags) | set(self._artist_result_tags)
         for t in tags:
             w = self.tag_weights.get(t, 1.0)
-            if self.prompt_format == 'anima' and t in self._current_artist_rec_tags:
+            if self.prompt_format == 'anima' and t in artist_tags:
                 parts.append(_format_tag_with_weight(f'@{t}', w, self.prompt_format))
             else:
                 parts.append(_format_tag_with_weight(t, w, self.prompt_format))

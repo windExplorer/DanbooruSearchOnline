@@ -18,6 +18,7 @@ class TagResult:
     source: str
     layer: str
     wiki: str = ""
+    artist_top_tags: list[str] = field(default_factory=list)
 
 
 @dataclass

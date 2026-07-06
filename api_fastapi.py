@@ -27,10 +27,10 @@ FastAPI 适配层（可选）。
 from __future__ import annotations
 
 import asyncio
-import re
 from typing import Any
+from typing import Literal
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from core.engine import DanbooruTagger
 from core.models import SearchRequest, SearchResponse
@@ -39,26 +39,64 @@ import core.counter as counter
 
 # ── Pydantic I/O 模型（API 层专用，与 core.models 解耦）──
 
+LayerName = Literal['英文', '中文扩展词', '释义', '中文核心词', 'artist']
+CategoryName = Literal['General', 'Artist', 'Copyright', 'Character', 'Meta']
+GroupMode = Literal['off', 'expand', 'diverse']
+
 
 class SearchIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "query": "白色水手服的女孩",
+                "top_k": 5,
+                "limit": 80,
+                "popularity_weight": 0.15,
+                "show_nsfw": True,
+                "use_segmentation": True,
+                "target_layers": ['英文', '中文扩展词', '释义', '中文核心词', 'artist'],
+                "target_categories": ['General', 'Character', 'Copyright'],
+                "group_mode": "off",
+                "max_per_group": 2,
+            }
+        }
+    )
+
     query: str
-    search_mode: str = "full_scene"
-    category: str = "all"
+    top_k: int = Field(5, ge=1, le=50)
+    limit: int = Field(80, ge=1, le=500)
+    popularity_weight: float = Field(0.15, ge=0.0, le=1.0)
     show_nsfw: bool = True
-    include_wiki: bool = False
+    use_segmentation: bool = True
+    target_layers: list[LayerName] = Field(
+        default_factory=lambda: ['英文', '中文扩展词', '释义', '中文核心词'],
+        description="匹配层；可显式加入 'artist' 以返回编辑距离<=1的画师标签行。",
+    )
+    target_categories: list[CategoryName] = Field(
+        default_factory=lambda: ['General', 'Character', 'Copyright'],
+    )
+    group_mode: GroupMode = "off"
+    max_per_group: int = 2
 
 
 class TagOut(BaseModel):
     tag: str
     cn_name: str
+    category: str
+    nsfw: str
+    final_score: float
+    semantic_score: float
+    count: int
+    source: str
+    layer: str
     wiki: str = ""
+    artist_top_tags: list[str] = Field(default_factory=list)
 
 
 class RelatedIn(BaseModel):
     tags: list[str]
     limit: int = Field(50, ge=1, le=200)
     show_nsfw: bool = True
-    include_wiki: bool = False
 
 
 class RelatedTagOut(BaseModel):
@@ -69,10 +107,10 @@ class RelatedTagOut(BaseModel):
 
 
 class SearchOut(BaseModel):
-    prompt: str
+    tags_all: str
+    tags_sfw: str
     results: list[TagOut]
     keywords: list[str]
-    hint: str | None = None
 
 
 class ArtistIn(BaseModel):
@@ -88,21 +126,6 @@ class ArtistOut(BaseModel):
     post_count: int
     sources: list[str]
     top_tags: list[str]
-
-
-_SEARCH_MODE_PRESETS: dict[str, dict[str, Any]] = {
-    "precise_lookup": {"top_k": 10, "limit": 10, "popularity_weight": 0.15, "use_segmentation": False, "group_mode": "off", "max_per_group": 2},
-    "concept_explore": {"top_k": 80, "limit": 80, "popularity_weight": 0.15, "use_segmentation": True, "group_mode": "expand", "max_per_group": 2},
-    "subject_describe": {"top_k": 20, "limit": 20, "popularity_weight": 0.15, "use_segmentation": False, "group_mode": "off", "max_per_group": 2},
-    "full_scene": {"top_k": 5, "limit": 80, "popularity_weight": 0.15, "use_segmentation": True, "group_mode": "diverse", "max_per_group": 2},
-}
-
-_CATEGORY_MAP: dict[str, list[str]] = {
-    "all": ["General", "Character", "Copyright", "Artist", "Meta"],
-    "general": ["General"],
-    "character": ["Character"],
-    "copyright": ["Copyright"],
-}
 
 
 async def _correct_tags(tagger: DanbooruTagger, tags: list[str]) -> tuple[list[str], list[str], dict[str, str]]:
@@ -163,24 +186,12 @@ app = FastAPI(
 
 # ── 端点 ──
 
-@app.post("/search")
-async def search(body: SearchIn) -> dict[str, Any]:
+@app.post("/search", response_model=SearchOut)
+async def search(body: SearchIn) -> SearchOut:
     tagger = await DanbooruTagger.get_instance()
 
     # SearchIn → core.models.SearchRequest（两者字段一一对应，直接解包）
-    preset = _SEARCH_MODE_PRESETS.get(body.search_mode, _SEARCH_MODE_PRESETS["full_scene"])
-    target_categories = _CATEGORY_MAP.get(body.category, _CATEGORY_MAP["all"])
-    request = SearchRequest(
-        query=body.query,
-        top_k=preset["top_k"],
-        limit=preset["limit"],
-        popularity_weight=preset["popularity_weight"],
-        show_nsfw=body.show_nsfw,
-        use_segmentation=preset["use_segmentation"],
-        target_categories=target_categories,
-        group_mode=preset["group_mode"],
-        max_per_group=preset["max_per_group"],
-    )
+    request = SearchRequest(**body.model_dump())
 
     # 并发安全的异步 search（信号量串行化 + 线程池执行）
     try:
@@ -193,27 +204,12 @@ async def search(body: SearchIn) -> dict[str, Any]:
     await counter.increment_success()
     await counter.increment_copy()
 
-    results: list[dict[str, Any]] = []
-    for result in response.results:
-        if result.nsfw == '1' and not body.show_nsfw:
-            continue
-        item = {
-            "tag": result.tag,
-            "cn_name": result.cn_name,
-        }
-        if body.include_wiki:
-            item["wiki"] = result.wiki
-        results.append(item)
-
-    payload: dict[str, Any] = {
-        "prompt": response.tags_sfw if not body.show_nsfw else response.tags_all,
-        "keywords": response.keywords,
-        "results": results,
-    }
-    han_chars = re.findall(r'[\u4e00-\u9fff]', body.query)
-    if body.query and len(han_chars) / len(body.query) < 0.5:
-        payload["hint"] = "检测到英文查询，该搜索引擎对中文查询优化更好，如果搜索结果不合预期，推荐用中文重试"
-    return payload
+    return SearchOut(
+        tags_all=response.tags_all,
+        tags_sfw=response.tags_sfw,
+        results=[TagOut(**vars(result)) for result in response.results],
+        keywords=response.keywords,
+    )
 
 
 @app.post("/related")
@@ -250,8 +246,7 @@ async def related(body: RelatedIn) -> dict[str, Any]:
             "cn_name": result.cn_name,
             "sources": result.sources,
         }
-        if body.include_wiki:
-            item["wiki"] = result.wiki
+        item["wiki"] = result.wiki
         output.append(item)
 
     return _with_corrections(output, corrections)

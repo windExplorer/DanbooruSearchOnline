@@ -347,23 +347,20 @@ thumbnail: >-
 POST /api/search
 {
     "query": "白色水手服的女孩",
-    "search_mode": "full_scene",
-    "category": "all",
+    "top_k": 5,
+    "limit": 80,
+    "popularity_weight": 0.15,
     "show_nsfw": true,
-    "include_wiki": false
+    "use_segmentation": true,
+    "target_layers": ["英文", "中文扩展词", "释义", "中文核心词"],
+    "target_categories": ["General", "Character", "Copyright"],
+    "group_mode": "off",
+    "max_per_group": 2
 }
 ```
 
-`search_mode` 使用预设检索策略，不再直接暴露 `top_k`、`limit`、`popularity_weight`、`use_segmentation` 等底层参数：
-
-| 模式 | 适用场景 |
-|---|---|
-| `full_scene` | 默认模式。用于完整画面、多人/多元素描述，返回可直接使用的 prompt |
-| `concept_explore` | 开放式概念发散，例如“兔耳朵都有哪些” |
-| `subject_describe` | 单一角色、物品或视觉概念描述，例如“EVA中蓝发的驾驶员” |
-| `precise_lookup` | 精确查词或拼写纠错，例如 `selafuku` |
-
-`category` 可选：`all`、`general`、`character`、`copyright`。搜索响应包含 `prompt`、`keywords`、`results`，当 `include_wiki=true` 时，每条结果会附带 `wiki` 字段。
+搜索接口保留底层可调参数，适合需要精细控制召回数量、分层检索、分词策略、类别筛选和分组去重的工作流。
+响应包含 `tags_all`、`tags_sfw`、`keywords`、`results`；每条结果默认包含完整字段和 `wiki`。
 
 **关联推荐接口**
 ```
@@ -371,12 +368,11 @@ POST /api/related
 {
     "tags": ["white_serafuku", "sailor_collar"],
     "limit": 50,
-    "show_nsfw": true,
-    "include_wiki": false
+    "show_nsfw": true
 }
 ```
 
-响应为 `results` 列表；如果输入标签拼写错误但可被纠正，会额外返回 `correction_note` 和 `corrections`。
+响应为 `results` 列表，每条结果默认包含 `wiki`；如果输入标签拼写错误但可被纠正，会额外返回 `correction_note` 和 `corrections`。
 
 **推荐擅长画师接口**
 ```
