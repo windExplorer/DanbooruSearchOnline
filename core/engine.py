@@ -39,8 +39,39 @@ from platform_utils import (
 )
 
 
-# 限制 PyTorch CPU 线程数，给 asyncio 事件循环留出至少一个核心。
-torch.set_num_threads(max(1, (os.cpu_count() or 2) - 1))
+def _positive_int_env(name: str) -> Optional[int]:
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _resolve_torch_threads(cpu_count: Optional[int] = None) -> int:
+    """Resolve PyTorch intra-op threads for CPU-only Space deployments."""
+    override = _positive_int_env('DANBOORU_TORCH_THREADS')
+    if override is not None:
+        return override
+    cpus = cpu_count or os.cpu_count() or 2
+    if cpus <= 2:
+        return 1
+    return max(1, min(4, cpus // 2))
+
+
+def _resolve_cpu_sem_limit(cpu_count: Optional[int] = None) -> int:
+    """Resolve process-wide CPU task concurrency."""
+    override = _positive_int_env('DANBOORU_CPU_CONCURRENCY')
+    if override is not None:
+        return override
+    cpus = cpu_count or os.cpu_count() or 2
+    return 2 if cpus >= 8 else 1
+
+
+# 限制 PyTorch CPU 线程数，给 asyncio 事件循环和 UI 留出核心。
+torch.set_num_threads(_resolve_torch_threads())
 
 
 # LRU 缓存
@@ -585,7 +616,7 @@ class DanbooruTagger:
     @classmethod
     def _get_cpu_sem(cls) -> asyncio.Semaphore:
         if cls._cpu_sem is None:
-            cls._cpu_sem = asyncio.Semaphore(2)
+            cls._cpu_sem = asyncio.Semaphore(_resolve_cpu_sem_limit())
         return cls._cpu_sem
 
     async def search_async(self, request: SearchRequest) -> SearchResponse:

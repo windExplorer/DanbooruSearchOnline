@@ -13,6 +13,7 @@ sys.stdout.reconfigure(line_buffering=True)
 print("[UI] 脚本开始执行", flush=True)
 import asyncio
 import os
+import re
 import json as _json
 import subprocess
 import traceback
@@ -98,6 +99,19 @@ SPONSOR_BODY = (
     "量力而行就好，未成年人请勿赞赏。"
 )
 
+
+def _resolve_group_render_limit(default: int = 80) -> int:
+    raw = os.environ.get('DANBOORU_GROUP_RENDER_LIMIT')
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+GROUP_RENDER_TAG_LIMIT = _resolve_group_render_limit()
+
 # 搜索模式预设
 _SEARCH_MODE_PRESETS: dict[str, dict] = {
     '精确查词': {'top_k': 20, 'limit': 10, 'popularity_weight': 0.15, 'use_segmentation': False, 'group_mode': 'off', 'max_per_group': 2},
@@ -109,6 +123,68 @@ _SEARCH_MODE_OPTIONS = ['自定义'] + list(_SEARCH_MODE_PRESETS.keys())
 
 
 # ── 辅助函数 ───────────────────────────────────────────────────────────────────
+
+def _next_group_render_limit(current: int, total: int, page_size: int) -> int:
+    if page_size <= 0:
+        return total
+    return min(total, max(page_size, current + page_size))
+
+
+def _limit_group_render_tags(tags: list[dict], visible_limit: int | None = None) -> tuple[list[dict], int]:
+    limit = GROUP_RENDER_TAG_LIMIT if visible_limit is None else visible_limit
+    if limit <= 0:
+        return tags, 0
+    if len(tags) <= limit:
+        return tags, 0
+    return tags[:limit], len(tags) - limit
+
+
+def _should_group_start_expanded(group_name: str, expanded_groups: set[str]) -> bool:
+    return group_name in expanded_groups
+
+
+def _group_names_key(group_data: list[dict]) -> tuple[str, ...]:
+    return tuple(sorted({str(group.get('group', '')) for group in group_data}))
+
+
+def _group_scroll_dom_id(group_name: str) -> str:
+    safe_name = re.sub(r'[^0-9A-Za-z_-]+', '_', group_name)
+    return f'group-scroll-{safe_name}'
+
+
+def _scroll_state_restore_script(positions: dict[str, int]) -> str:
+    js_positions = _json.dumps(positions)
+    return f"""
+        (() => {{
+            const positions = {js_positions};
+            const restore = () => {{
+                const windowTop = positions.__window__;
+                if (typeof windowTop === 'number') {{
+                    window.scrollTo({{ top: windowTop, behavior: 'auto' }});
+                    const root = document.scrollingElement || document.documentElement || document.body;
+                    if (root) root.scrollTop = windowTop;
+                }}
+                for (const [id, top] of Object.entries(positions)) {{
+                    if (id === '__window__') continue;
+                    if (id.endsWith('__bottom__')) continue;
+                    const el = document.getElementById(id);
+                    if (!el) continue;
+                    const bottom = positions[`${{id}}__bottom__`];
+                    if (typeof bottom === 'number') {{
+                        el.scrollTop = Math.max(0, el.scrollHeight - bottom);
+                    }} else {{
+                        el.scrollTop = top;
+                    }}
+                }}
+            }};
+            requestAnimationFrame(() => {{
+                restore();
+                requestAnimationFrame(restore);
+            }});
+            setTimeout(restore, 80);
+        }})();
+    """
+
 
 def _get_git_commit() -> str:
     try:
@@ -175,6 +251,11 @@ class DanbooruSearchUI:
         self.result_table = None           # 左栏表格
         self.related_list_container = None  # 右栏关联推荐列表
         self.group_expansion_container = None  # 左栏 Group 同类扩展（表格下方）
+        self.client = None
+        self._group_render_limits: dict[str, int] = {}
+        self._group_expanded_names: set[str] = set()
+        self._group_scroll_positions: dict[str, int] = {}
+        self._group_render_key: tuple[str, ...] = ()
         self.results_section = None        # 整个结果区域（搜索前隐藏）
         self.selection_count_label = None
         self.selected_display = None       # 已废弃 textarea，保留兼容
@@ -433,6 +514,7 @@ class DanbooruSearchUI:
     # ══════════════════════════════════════════════════════════════════════
 
     def build_page(self):
+        self.client = ui.context.client
         ui.colors(primary='#4A90E2', secondary='#5E6C84', accent='#FF6B6B')
         ui.add_head_html('''
             <meta name="description" content="基于语义匹配的 Danbooru 标签搜索引擎，支持中英双语描述、多维匹配、智能分词与共现关联推荐。">
@@ -1676,6 +1758,7 @@ class DanbooruSearchUI:
                 selected_tags,
                 show_nsfw,
             )
+            await self._capture_group_scroll_positions()
             self._render_group_expansion(group_data, selected_tags, show_nsfw)
         self._debounce_group_task = asyncio.ensure_future(_do())
 
@@ -1770,6 +1853,12 @@ class DanbooruSearchUI:
             return
         self.group_expansion_container.clear()
         self._group_checkboxes.clear()
+        group_key = _group_names_key(group_data)
+        if group_key != self._group_render_key:
+            self._group_render_key = group_key
+            self._group_render_limits.clear()
+            self._group_expanded_names.clear()
+            self._group_scroll_positions.clear()
 
         if not group_data:
             with self.group_expansion_container:
@@ -1791,13 +1880,24 @@ class DanbooruSearchUI:
                 group_name = group_info['group']
                 group_cn = group_info.get('group_cn_name', group_name.replace('tag_group:', ''))
                 tags = group_info['tags']
+                visible_limit = self._group_render_limits.get(group_name, GROUP_RENDER_TAG_LIMIT)
+                visible_tags, hidden_count = _limit_group_render_tags(tags, visible_limit)
+                scroll_id = _group_scroll_dom_id(group_name)
 
-                with ui.expansion(
+                expansion = ui.expansion(
                     f'{group_cn} ({len(tags)} 个标签)',
                     icon='label',
-                ).classes('w-full').props('dense'):
-                    with ui.element('div').classes('w-full grid grid-cols-2 gap-1 p-1').style('max-height: 600px; overflow-y: auto;'):
-                        for t in tags:
+                    value=_should_group_start_expanded(group_name, self._group_expanded_names),
+                ).classes('w-full').props('dense')
+                expansion.on(
+                    'update:model-value',
+                    lambda e, g=group_name: self._on_group_expansion_change(g, e),
+                )
+                with expansion:
+                    with ui.element('div').props(
+                        f'id="{scroll_id}" data-danbooru-group-scroll="1"'
+                    ).classes('w-full grid grid-cols-2 gap-1 p-1').style('max-height: 600px; overflow-y: auto;'):
+                        for t in visible_tags:
                             tag = t['tag']
                             cn_first = t['cn_name'].split(',')[0].strip() if t['cn_name'] else ''
                             cn_full = t.get('cn_name', '')
@@ -1848,6 +1948,99 @@ class DanbooruSearchUI:
                                     else:
                                         count_str = str(count)
                                     ui.label(count_str).classes('text-sm font-bold text-grey-600 whitespace-nowrap')
+                        if hidden_count > 0:
+                            async def _load_more(
+                                g=group_name,
+                                total=len(tags),
+                                gd=group_data,
+                                st=list(selected_tags),
+                                sn=show_nsfw,
+                            ):
+                                await self._load_more_group_tags(g, total, gd, st, sn)
+
+                            ui.button(
+                                f'加载更多（剩余 {hidden_count} 个）',
+                                icon='expand_more',
+                                on_click=_load_more,
+                            ).props('dense flat color=primary').classes('col-span-2 text-xs')
+        self._restore_group_scroll_positions()
+
+    def _on_group_expansion_change(self, group_name: str, event):
+        value = getattr(event, 'args', None)
+        if isinstance(value, dict):
+            value = value.get('value', value.get('modelValue'))
+        if bool(value):
+            self._group_expanded_names.add(group_name)
+        else:
+            self._group_expanded_names.discard(group_name)
+
+    async def _capture_group_scroll_positions(self, *, anchor_bottom: bool = False):
+        client = self.client
+        if client is None or getattr(client, '_deleted', False):
+            return
+        anchor_flag = 'true' if anchor_bottom else 'false'
+        try:
+            raw = await client.run_javascript(
+                f"""
+                const anchorBottom = {anchor_flag};
+                const groupEntries = Array.from(document.querySelectorAll('[data-danbooru-group-scroll="1"]'))
+                    .flatMap(el => {{
+                        const top = Math.round(el.scrollTop || 0);
+                        const entries = [[el.id, top]];
+                        if (anchorBottom) {{
+                            entries.push([`${{el.id}}__bottom__`, Math.round(el.scrollHeight - top)]);
+                        }}
+                        return entries;
+                    }});
+                JSON.stringify({{
+                    __window__: Math.round(
+                        window.scrollY ||
+                        document.documentElement.scrollTop ||
+                        document.body.scrollTop ||
+                        0
+                    ),
+                    ...Object.fromEntries(groupEntries),
+                }});
+                """,
+                timeout=1.0,
+            )
+        except Exception:
+            return
+        try:
+            data = _json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(data, dict):
+                self._group_scroll_positions = {
+                    str(k): int(v) for k, v in data.items()
+                    if str(k) and int(v) >= 0
+                }
+        except Exception:
+            pass
+
+    def _restore_group_scroll_positions(self):
+        if not self._group_scroll_positions:
+            return
+        client = self.client
+        if client is None or getattr(client, '_deleted', False):
+            return
+        client.run_javascript(_scroll_state_restore_script(self._group_scroll_positions), timeout=1.0)
+
+    async def _load_more_group_tags(
+        self,
+        group_name: str,
+        total: int,
+        group_data: list,
+        selected_tags: list[str],
+        show_nsfw: bool,
+    ):
+        await self._capture_group_scroll_positions(anchor_bottom=True)
+        current = self._group_render_limits.get(group_name, GROUP_RENDER_TAG_LIMIT)
+        self._group_render_limits[group_name] = _next_group_render_limit(
+            current,
+            total,
+            GROUP_RENDER_TAG_LIMIT,
+        )
+        self._group_expanded_names.add(group_name)
+        self._render_group_expansion(group_data, selected_tags, show_nsfw)
 
     # ── 表格列动态更新 ──────────────────────────────────────────────────
 
