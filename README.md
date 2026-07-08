@@ -6,7 +6,7 @@ colorTo: indigo
 sdk: docker
 app_port: 7860
 pinned: false
-license: mit
+license: gpl-3.0
 short_description: 基于语义匹配的 Danbooru 标签搜索引擎，支持多维匹配、智能分词与共现关联推荐。
 tags:
   - text-to-image
@@ -14,11 +14,38 @@ tags:
   - stable-diffusion
   - danbooru
   - nlp
-thumbnail: >-
-    https://akizukipic.oss-cn-beijing.aliyuncs.com/img/202604022117025.png
 ---
 
 # Danbooru Tags Searcher
+
+> 🌿 **本仓库为派生项目（Fork）**。原项目信息如下：
+>
+> | 项目 | 内容 |
+> |---|---|
+> | 原项目名称 | DanbooruSearchOnline |
+> | 原作者 | SuzumiyaAkizuki（GitHub）/ SAkizuki（HuggingFace） |
+> | 原仓库 | https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline |
+> | 派生基准 | 原作者 `main` 分支（README 内容对应约 2026 年 4 月快照） |
+> | 本仓库 | https://github.com/windExplorer/DanbooruSearchOnline |
+> | 派生时间 | 2026-07-08 |
+> | 许可证 | GPL-3.0（继承自原项目；原项目根目录 `LICENSE` 文件亦为 GPL-3.0） |
+>
+> 原项目采用 **GPL-3.0** 强 copyleft 协议，本派生作品沿用该协议：原始作者保留其贡献的版权，本仓库的后续修改归本仓库维护者所有。对原项目的后续更新可通过 `git pull upstream main` 合并。
+
+## 本仓库相对原项目的改动
+
+本仓库在保留原项目全部检索能力的基础上，做了以下本地化 / 工程化改造（详见各文件改动与 [DEPLOYMENT.md](./DEPLOYMENT.md)）：
+
+- **模型路径可配置化**：引擎默认从项目内 `model/bge-m3/` 加载 `BAAI/bge-m3` 模型，不再依赖原项目在代码/文档中写死的外部固定路径（如 `D:/LLMs/BAAI/bge-m3`）。可通过 `DANBOORU_MODEL_PATH` 环境变量或 `.env` 指向任意位置；都不设置时自动从 HuggingFace Hub 下载。
+- **集中配置 `.env`**：引入标准 `.env`（及 `.env.example` 模板）作为本地配置入口，替代原项目非标准的 `config.env` 命名，启动时自动加载，无需手动 `export`。
+- **新增部署文档 `DEPLOYMENT.md`**：汇总依赖安装、运行方式、可选 GPU、首次编码、环境变量与生产部署说明，`README` 顶部增设入口链接。
+- **修复 MCP 服务关机报错**：修复原项目挂载 `/mcp` 子应用时跨任务退出 anyio cancel scope 的问题（改为同一后台任务内 enter/exit），消除 `Ctrl+C` 退出时的 `RuntimeError: Attempted to exit cancel scope in a different task` 及伴随的噪音日志。
+- **优化退出日志**：全局 `excepthook` 忽略 `KeyboardInterrupt` / `SystemExit`，避免正常退出被误报为「启动时致命错误」。
+- **新增 `pyproject.toml`**：以 uv 管理的项目元信息与依赖声明，替代/补充原有 `requirements.txt`。
+- **模型权重不入库**：`.gitignore` 忽略整个 `model/bge-m3/`（含 `pytorch_model.bin` 等数 GB 权重），仅保留 `model/README.md` 放置说明；他人 clone 后需自行放入模型或让程序自动下载。
+- **移除 `sync_to_hf` GitHub Actions**：删除原作者用于将代码同步到其 HuggingFace / ModelScope 空间的自动化工作流（含原作者专属仓库 ID 与密钥配置），本仓库不再自动同步到任何第三方平台。
+- **许可证标注修正**：`README` frontmatter 的 `license` 由原作者误标的 `mit` 修正为 `gpl-3.0`，与仓库根目录 `LICENSE` 文件保持一致。
+- **移除原作者个人资料**：删除原 README 中的微信赞赏码（收款码）、基于原作者私有服务器的搜索统计等个人相关板块。
 
 > 📦 **本地部署 / 自托管 / 开发**：依赖安装、运行方式、可选 GPU、首次编码、环境变量与生产部署，请见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
 
@@ -28,7 +55,7 @@ thumbnail: >-
 
 目前支持使用汉语和英语进行查找
 
-**立即使用：** https://huggingface.co/spaces/SAkizuki/DanbooruSearch
+**原作者在线版（由原作者托管，非本仓库）：** https://huggingface.co/spaces/SAkizuki/DanbooruSearch
 
 **ComfyUI 插件版本：** [ComfyUI-DanbooruSearcher](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher)
 
@@ -395,7 +422,7 @@ POST /api/artists
 GET /api/health
 ```
 
-详见：[API 文档](https://sakizuki-danboorusearch.hf.space/api/docs)
+启动后访问本仓库服务的交互式文档：`http://localhost:7860/api/docs`（即上方 REST API 章节提到的 `/api/docs`）。原作者的在线文档见 https://sakizuki-danboorusearch.hf.space/api/docs（仅供参考）。
 
 ---
 
@@ -403,7 +430,17 @@ GET /api/health
 
 本工具提供 MCP（Model Context Protocol）服务，支持将搜索引擎直接接入 Claude Desktop、Cursor、Cherry Studio 等支持 MCP 协议的大模型客户端，让 AI 能够在对话中直接调用标签搜索能力。
 
-**MCP 服务地址：**
+**MCP 服务地址（自部署）：**
+
+启动本仓库服务后，MCP 端点为：
+
+```
+http://<你的服务地址>:7860/mcp/mcp
+```
+
+其中 `<你的服务地址>` 默认即本机 `localhost`（如 `http://localhost:7860/mcp/mcp`）；若部署到服务器，替换为其 IP / 域名即可。
+
+**原作者托管版（参考，非本仓库维护）：**
 
 ```
 https://sakizuki-danboorusearch.hf.space/mcp/mcp
@@ -413,7 +450,7 @@ https://sakizuki-danboorusearch.hf.space/mcp/mcp
 https://sakizuki-danboorusearchonline.ms.show/mcp/mcp
 ```
 
-以上两个端口提供完全相同的服务，互为备份
+以上为原作者公开部署的公共服务，互为备份；自部署场景请使用上方本仓库端点。
 
 #### 接入方法
 
@@ -544,16 +581,7 @@ npm install -g mcp-remote
 
 #### 服务使用说明
 
-HF Space 在无流量时会进入休眠状态，首次请求需要等待冷启动（约 30~60 秒）。若 AI 调用超时，稍等片刻后重试即可，或先访问 [Space 页面](https://huggingface.co/spaces/SAkizuki/DanbooruSearch) 将其唤醒。
-
-任何用户都可以免费将本服务的API或MCP接口接入自己的私有或公开服务中。
-
-**如果接入公开服务，务必在主页提供链接到本服务主地址的友情链接**：
-
-```
-URL: https://huggingface.co/spaces/SAkizuki/DanbooruSearch
-简介: 基于语义匹配的Danbooru标签搜索引擎，支持多维匹配与共现关联推荐。
-```
+本仓库为自部署版本，运行在你自己的机器 / 服务器上，**无冷启动休眠问题**，随起随用。任何用户都可以免费将本服务的 API 或 MCP 接口接入自己的私有或公开服务中；若部署为对外公开服务，建议在使用说明中注明项目源自原作者 [SuzumiyaAkizuki/DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)，以示对原项目的致谢（非强制）。
 
 ---
 
@@ -576,18 +604,7 @@ URL: https://huggingface.co/spaces/SAkizuki/DanbooruSearch
 - 仅支持中文 / 英文双语查找
 - 如果检索结果不理想，欢迎点击「没搜到？」按钮提交反馈，帮助持续优化引擎
 
-## 支持项目
+## 致谢 / 参考
 
-DanbooruSearch 会继续免费开放。如果这个小工具刚好帮你省了点时间，可以自愿赞赏一点维护成本；赞赏不解锁任何功能、不提高额度、不影响搜索结果，也不会获得特殊待遇。量力而行就好，未成年人请勿赞赏。
-
-![微信赞赏码](https://akizukipic.oss-cn-beijing.aliyuncs.com/img/202501120027592.png)
-
-
-## 搜索统计
-
-![](https://dsocounter.oss-cn-hongkong.aliyuncs.com/danbooru_counter/search_stats.png)
-
-## 友情链接
-
-- 本项目中借鉴了[Good Anima](https://github.com/ShiroEirin/comfyui-good-anima)项目中关于Anima模型提示词书写的相关内容
-- [Linux Do社区](https://linux.do/)
+- 本工具派生自 [SuzumiyaAkizuki/DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)（原项目采用 GPL-3.0 协议）。
+- 本项目中借鉴了 [Good Anima](https://github.com/ShiroEirin/comfyui-good-anima) 项目中关于 Anima 模型提示词书写的相关内容。
