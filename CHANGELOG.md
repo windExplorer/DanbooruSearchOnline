@@ -15,6 +15,9 @@
 - 主标签页（标签搜索 / 使用说明）从独立一行移入顶部导航栏右侧，与标题、徽章同栏，节省一整行高度；标签页去卡片底色融入导航条（`.dt-nav-tabs`）。
 - banner / 结果面板 / 底部统计条各自加 `max-w-[1500px] mx-auto`，保持内容居中、不顶满视口。
 
+### 文档
+- 新增 `API.md`：覆盖 `/api/*` REST 接口（`/search`、`/related`、`/artists`、`/health`）、MCP 工具（`search_tags`、`get_related_tags`、`get_artist_recommendations`、`get_artist_profile`、`get_anima_format`、`get_newbie_format`）、其他路由、启动方式与 `core/models.py` 数据模型参考。
+
 ---
 
 ## [v1.1.0] - 2026-07-09
