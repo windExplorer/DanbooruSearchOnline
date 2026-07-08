@@ -1,0 +1,45 @@
+[project]
+name = "danbooru-search-online"
+version = "0.1.0"
+description = "基于语义匹配的 Danbooru 标签搜索引擎，支持多维匹配、智能分词与共现关联推荐。"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "nicegui",
+    "pandas",
+    "sentence-transformers",
+    "torch",
+    "jieba",
+    "pyarrow",
+    "safetensors",
+    "huggingface_hub",
+    "fastapi",
+    "uvicorn",
+    "modelscope",
+    "oss2",
+    "mcp==1.27.0",
+]
+
+[project.optional-dependencies]
+# 启用 CUDA 版 torch（需 NVIDIA 驱动支持 CUDA 12.8，如 RTX 50 系）。
+# 用法：
+#   uv sync --extra gpu
+#   uv run --extra gpu python ui_nicegui.py
+gpu = ["torch"]
+
+[tool.uv.sources]
+# 仅在激活 gpu extra 时，从 PyTorch CUDA 12.8 源拉取 torch；
+# 默认（无 extra）仍走 PyPI 的 CPU 版，保证无 GPU 的生产环境正常。
+torch = [
+    { index = "pytorch-cu128", extra = "gpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv]
+# 本项目是应用（扁平模块 + core/ 包），不是可发布的库，
+# 因此禁止 uv 尝试构建/安装项目自身，只同步依赖到 .venv。
+package = false

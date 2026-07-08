@@ -39,6 +39,25 @@ from platform_utils import (
 )
 
 
+def _resolve_device() -> str:
+    """解析推理设备，受环境变量 DANBOORU_DEVICE 控制（可选）:
+       auto (默认) → 检测到 CUDA 时用 'cuda'，否则 'cpu'
+       cpu         → 强制 'cpu'
+       cuda        → 强制 'cuda'（无可用 CUDA 时自动回退 cpu 并打印告警）
+    """
+    env = os.environ.get('DANBOORU_DEVICE', 'auto').strip().lower()
+    has_cuda = torch.cuda.is_available()
+    if env == 'cpu':
+        return 'cpu'
+    if env == 'cuda':
+        if has_cuda:
+            return 'cuda'
+        print('[Engine] 警告: DANBOORU_DEVICE=cuda 已设置，但 torch 未检测到可用 CUDA，'
+              '回退到 cpu。如需 GPU 请安装带 CUDA 的 torch 构建。')
+        return 'cpu'
+    return 'cuda' if has_cuda else 'cpu'
+
+
 def _positive_int_env(name: str) -> Optional[int]:
     raw = os.environ.get(name)
     if raw is None:
@@ -227,7 +246,7 @@ class DanbooruTagger:
         self.model_path = model_path or resolve_model_path()
 
         self.csv_path  = csv_file
-        self.device    = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device    = _resolve_device()
         self.paths     = _CachePaths(cache_dir)
         self.cooc_file = cooc_file
         self.group_file = group_file
@@ -736,11 +755,12 @@ class DanbooruTagger:
         self._encode_all_and_save()
 
     def _encode_all_and_save(self) -> None:
-        print('[Engine] 全量编码...')
-        for _, attr, col in _LAYER_SPEC:
+        print(f'[Engine] 全量编码（共 {len(_LAYER_SPEC)} 层）...')
+        for idx, (layer_name, attr, col) in enumerate(_LAYER_SPEC, 1):
             texts = self.df[col].tolist()
             if col == 'name':  # 英文层：编码时将下划线替换为空格
                 texts = [t.replace('_', ' ') for t in texts]
+            print(f'[Engine] ▶ 第 {idx}/{len(_LAYER_SPEC)} 层「{layer_name}」')
             setattr(self, attr, self._encode_texts(texts))
         self._save_cache()
 
@@ -880,8 +900,9 @@ class DanbooruTagger:
     # ── 编码 & 预处理 ──────────────────────────────────────────────────────
 
     def _encode_texts(self, texts: list[str]) -> torch.Tensor:
+        print(f'[Engine]   编码 {len(texts)} 条文本 (device={self.device}) ...')
         return self.model.encode(
-            texts, batch_size=64, show_progress_bar=False, convert_to_tensor=True,
+            texts, batch_size=64, show_progress_bar=True, convert_to_tensor=True,
         ).float()
 
     def _load_model(self) -> None:

@@ -58,6 +58,33 @@ from pathlib import Path
 import oss2
 from typing import Literal, Optional
 
+
+#  本地配置文件（.env）
+def _load_config_env() -> None:
+    """从项目根目录的 .env 载入本地配置（若存在）。
+
+    仅填充尚未设置的环境变量，因此真正的系统 / 终端环境变量优先级更高。
+    .env 已被 .gitignore 忽略（*.env），适合放置本地路径等机器相关配置，
+    不会误提交。可参考 .env.example 模板创建。
+    """
+    cfg = Path(__file__).resolve().parent / '.env'
+    if not cfg.is_file():
+        return
+    with cfg.open(encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, _, val = line.partition('=')
+            key, val = key.strip(), val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+    print(f'[PlatformUtils] 已从 {cfg} 载入本地配置')
+
+
+_load_config_env()
+
+
 #  平台检测 
 
 def _detect_platform() -> Literal['hf', 'ms', 'local']:
@@ -316,23 +343,34 @@ def download_file(
 
 #  模型路径解析 
 
-LOCAL_MODEL_PATH = 'D:/LLMs/BAAI/bge-m3'
-HF_MODEL_ID      = 'BAAI/bge-m3'
-MS_MODEL_ID      = 'BAAI/bge-m3'   # 魔搭上同名，走国内节点
+# 项目内模型目录：<项目根>/model。把模型放到 model/bge-m3 即可，无需依赖外部固定路径。
+PROJECT_MODEL_DIR = Path(__file__).resolve().parent / 'model'
+DEFAULT_LOCAL_MODEL_DIR = PROJECT_MODEL_DIR / 'bge-m3'
+
+HF_MODEL_ID = 'BAAI/bge-m3'
+MS_MODEL_ID = 'BAAI/bge-m3'   # 魔搭上同名，走国内节点
 
 
 def resolve_model_path(prefer_local: Optional[str] = None) -> str:
     """
-    按优先级解析模型路径：
-      1. 本地目录（prefer_local 或 LOCAL_MODEL_PATH）
-      2. 当前平台的 Hub Model ID（首次会自动下载缓存）
+    按优先级解析模型路径，可用环境变量 DANBOORU_MODEL_PATH 覆盖：
+      1. 代码显式传入的 prefer_local
+      2. 环境变量 DANBOORU_MODEL_PATH
+      3. 项目内目录 <项目根>/model/bge-m3（默认：模型已放于此处）
+      4. 以上都没有时，按平台从 Hub 自动下载并缓存
     返回可直接传给 SentenceTransformer 的路径或 model_id 字符串。
     """
-    local = prefer_local or LOCAL_MODEL_PATH
-    if os.path.exists(local):
-        print(f'[PlatformUtils] 使用本地模型: {local}')
-        return local
+    candidates = [
+        prefer_local,
+        os.environ.get('DANBOORU_MODEL_PATH'),
+        str(DEFAULT_LOCAL_MODEL_DIR),
+    ]
+    for cand in candidates:
+        if cand and os.path.exists(cand):
+            print(f'[PlatformUtils] 使用本地模型: {cand}')
+            return cand
 
+    # 本地均未命中：按平台从 Hub 拉取 / 下载
     if PLATFORM == 'ms':
         print(f'[PlatformUtils] 魔搭环境，使用 ModelScope Hub 模型: {MS_MODEL_ID}')
         try:

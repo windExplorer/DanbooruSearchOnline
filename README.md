@@ -20,6 +20,8 @@ thumbnail: >-
 
 # Danbooru Tags Searcher
 
+> 📦 **本地部署 / 自托管 / 开发**：依赖安装、运行方式、可选 GPU、首次编码、环境变量与生产部署，请见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+
 ![](https://akizukipic.oss-cn-beijing.aliyuncs.com/img/202604022117025.png)
 
 本项目提供一种基于语义匹配的 Danbooru 标签查找方案。用户可以通过输入日常语言或模糊描述，查找并匹配 Danbooru 数据集中对应的标准标签，适用于辅助构建 Stable Diffusion、NovelAI 等 AI 绘画工具的提示词（Prompt）。

@@ -21,6 +21,9 @@ from dataclasses import asdict
 from fastapi.responses import PlainTextResponse
 
 def _excepthook(exc_type, exc_value, exc_tb):
+    # Ctrl+C / 正常退出信号不打扰用户，避免误报成「启动时致命错误」
+    if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+        return
     print("[UI] FATAL ERROR ON STARTUP:", flush=True)
     traceback.print_exception(exc_type, exc_value, exc_tb)
     sys.__excepthook__(exc_type, exc_value, exc_tb)
@@ -2309,17 +2312,35 @@ if __name__ in {'__main__', '__mp_main__'}:
 
     mcp_app = mcp.streamable_http_app()
     app.mount('/mcp', mcp_app)
-    _mcp_lifespan_ctx = None
+    # MCP 子应用的 lifespan 必须在「同一个任务」内完成 enter 与 exit，
+    # 否则 anyio 的 cancel scope 在 on_shutdown 的另一任务里退出会报
+    # "Attempted to exit cancel scope in a different task" 并导致关不掉。
+    # 这里把整个 lifespan 放到一个后台任务里，用 Event 通知停止（不 cancel，
+    # 避免 finally 中的取消异常），确保 enter/exit 同任务、干净退出。
+    _mcp_lifespan_task = None
+    _mcp_lifespan_stop = None
     @app.on_startup
     async def _start_mcp():
-        global _mcp_lifespan_ctx
-        _mcp_lifespan_ctx = mcp_app.router.lifespan_context(mcp_app)
-        await _mcp_lifespan_ctx.__aenter__()
+        global _mcp_lifespan_task, _mcp_lifespan_stop
+        _mcp_lifespan_stop = asyncio.Event()
+        async def _run_mcp_lifespan():
+            ctx = mcp_app.router.lifespan_context(mcp_app)
+            await ctx.__aenter__()
+            try:
+                await _mcp_lifespan_stop.wait()
+            finally:
+                await ctx.__aexit__(None, None, None)
+        _mcp_lifespan_task = asyncio.create_task(_run_mcp_lifespan())
     @app.on_shutdown
     async def _stop_mcp():
-        global _mcp_lifespan_ctx
-        if _mcp_lifespan_ctx is not None:
-            await _mcp_lifespan_ctx.__aexit__(None, None, None)
+        global _mcp_lifespan_task, _mcp_lifespan_stop
+        if _mcp_lifespan_stop is not None:
+            _mcp_lifespan_stop.set()
+        if _mcp_lifespan_task is not None:
+            try:
+                await _mcp_lifespan_task
+            except Exception:
+                pass
 
 
     @app.get('/googlebd34b54f8562aa06.html')
@@ -2354,11 +2375,15 @@ if __name__ in {'__main__', '__mp_main__'}:
         return PlainTextResponse('')
 
 
+    # reload 默认关闭：本地一旦启动报错，reloader 会反复重启导致 Ctrl+C 难以退出。
+    # 需要热重载开发时，设环境变量 DANBOORU_RELOAD=1 再启动。
+    reload_enabled = (not is_cloud()) and os.environ.get('DANBOORU_RELOAD', '0') == '1'
+
     ui.run(
         host=host,
         port=port,
         title='Danbooru Tags Searcher',
-        reload=not is_cloud(),
+        reload=reload_enabled,
         show=not is_cloud(),
         reconnect_timeout=120,
     )

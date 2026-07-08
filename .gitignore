@@ -21,3 +21,10 @@ docs/
 .*/
 /AGENTS.md
 tests/
+
+# uv
+.venv/
+uv.lock
+
+# 模型权重不入库（本地放置 model/bge-m3/ 或自动从 HF 下载；model/README.md 仍保留说明）
+model/bge-m3/
