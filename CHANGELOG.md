@@ -1,0 +1,36 @@
+# 更新日志 (Changelog)
+
+本项目派生自 [SuzumiyaAkizuki/DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)（GPL-3.0）。本文件只记录**本仓库**（windExplorer/DanbooruSearchOnline）自身的改动。
+
+版本号采用 `主版本.次版本.修订` 格式；每次发布请打对应的 git tag。
+
+---
+
+## [v1.0.0] - 2026-07-09
+
+派生基线版本。在保留原项目全部检索能力的基础上，完成以下本地化 / 工程化改造。
+
+### 新增
+- 集中配置 `.env`（及 `.env.example` 模板），替代原项目非标准的 `config.env`，启动时自动加载。
+- 部署文档 `DEPLOYMENT.md`：依赖安装、运行方式、可选 GPU、首次编码、环境变量与生产部署说明。
+- `pyproject.toml`：以 uv 管理的项目元信息与依赖声明。
+- `model/README.md`：模型放置规范与 bge-m3 手动下载说明（HuggingFace / ModelScope 链接与命令、国内镜像）。
+- `README.md` 新增「派生说明」与「本仓库相对原项目的改动」章节。
+
+### 变更
+- **模型路径可配置化**：默认指向项目内 `model/bge-m3/`，支持 `DANBOORU_MODEL_PATH` 与 `.env` 覆盖，不再依赖原项目写死的外部固定路径；均不存在时自动从 HuggingFace Hub 下载。
+- 模型权重（数 GB）加入 `.gitignore`，不入库。
+- 许可证标注由误标的 `mit` 修正为 `gpl-3.0`，与仓库 `LICENSE` 文件一致。
+- `README` frontmatter 移除原作者 OSS 缩略图。
+
+### 修复
+- MCP 服务（`/mcp` 子应用）关机报错：将 lifespan 的 enter/exit 放入同一后台任务，修复 `Ctrl+C` 退出时的 `RuntimeError: Attempted to exit cancel scope in a different task`。
+- 全局 `excepthook` 忽略 `KeyboardInterrupt` / `SystemExit`，避免正常退出被误报为致命错误。
+
+### 移除
+- 原作者 `sync_to_hf` GitHub Actions 工作流（含其专属仓库 ID 与密钥配置）。
+- `README` 中原作者个人资料：微信赞赏码（收款码）、基于私有服务器的搜索统计板块，以及强制友情链接要求。
+
+---
+
+> 后续更新请在本文件**顶部**按上述格式新增条目，并打对应的 git tag（如 `v1.0.1`、`v1.1.0`）。
