@@ -6,6 +6,28 @@
 
 ---
 
+## [v1.1.0] - 2026-07-09
+
+界面整体重写（保留全部检索能力与交互逻辑，仅重构前端外壳与样式）。
+
+### 新增
+- 统一主题：indigo/violet/pink 配色、渐变页眉、卡片圆角阴影（`.dt-card`）、自定义滚动条。
+- 页眉信息条与「自托管版本」标识。
+
+### 变更
+- 重写 `build_page`、`_build_search_card`、`_build_selection_bar`、`_build_results_columns`、`_build_group_notice`、`_build_notice` 的视觉与布局；保留全部控件绑定与 `self.*` 容器引用（结果表格、关联推荐、画师推荐、同类标签、已选 chips 等刷新逻辑不变）。
+- 两栏结果卡片加图标标题，画师列表支持自定义滚动条。
+
+### 移除（原作者残留）
+- 微信赞赏码弹窗（`_build_sponsor_dialog` 及 `SPONSOR_*` 常量、页脚「请作者喝杯咖啡」按钮）。
+- Google Analytics（gtag）与 Google Search Console 验证 meta / 路由。
+- 初始化横幅与公告中的原作者外部服务链接（备用 Space、问秋月、使用指南站外地址）。
+- 注意事项中的「点赞 / Star / 赞赏」引导与站外链接。
+- 重复的 `robots.txt` 路由定义（保留一个）。
+- 页脚 MCP 外链改为指向本仓库与本地 `/api/docs`。
+
+---
+
 ## [v1.0.0] - 2026-07-09
 
 派生基线版本。在保留原项目全部检索能力的基础上，完成以下本地化 / 工程化改造。

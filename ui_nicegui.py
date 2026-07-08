@@ -92,15 +92,8 @@ OPTIONAL_COLS = {
 _CONFIG_LS_KEY = 'danbooru_search_config'
 _CONFIG_VERSION = 6
 
-SPONSOR_IMAGE_URL = "https://akizukipic.oss-cn-beijing.aliyuncs.com/img/202501120027592.png"
-SPONSOR_TOOLCHAIN_URL = "http://intro.sakizuki.site/index.html"
-SPONSOR_NOTICE_TEXT = "喜欢的话，可以请作者喝杯咖啡"
-SPONSOR_TITLE = "谢谢你愿意支持"
-SPONSOR_BODY = (
-    "如果你喜欢这个小工具，可以自愿赞赏一点维护成本。"
-    "它会继续免费开放；赞赏不会解锁任何额外功能、不会提高额度、不会影响搜索结果，"
-    "量力而行就好，未成年人请勿赞赏。"
-)
+# （已移除原作者的赞助 / 收款码相关常量）
+
 
 
 def _resolve_group_render_limit(default: int = 80) -> int:
@@ -298,7 +291,6 @@ class DanbooruSearchUI:
 
         self.mcp_notice = None
         self.notice_expansion = None
-        self.sponsor_dialog = None
 
         # 表格显示选项开关
         self.sw_semantic = None
@@ -333,27 +325,14 @@ class DanbooruSearchUI:
                     f'<a href="/api/docs" '
                     f'target="_blank" rel="noopener noreferrer" '
                     f'class="text-blue-400 hover:text-blue-600 hover:underline">使用 API 服务</a>'
-                    f' | <a href="https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline#mcp-接口" '
+                    f' | <a href="https://github.com/windExplorer/DanbooruSearchOnline" '
                     f'target="_blank" rel="noopener noreferrer" '
-                    f'class="text-blue-400 hover:text-blue-600 hover:underline">使用 MCP 服务</a>'
+                    f'class="text-blue-400 hover:text-blue-600 hover:underline">项目仓库</a>'
                 )
             except AttributeError:
                 pass
 
-    def _build_sponsor_dialog(self):
-        with ui.dialog() as self.sponsor_dialog, ui.card().classes('w-full max-w-sm'):
-            with ui.column().classes('w-full items-center gap-2 text-center'):
-                ui.label(SPONSOR_TITLE).classes('text-base font-bold text-gray-800')
-                ui.label(SPONSOR_BODY).classes('text-sm text-gray-600 leading-relaxed')
-                ui.image(SPONSOR_IMAGE_URL).classes('w-60 max-w-full rounded border border-gray-200')
-                ui.label('微信赞赏码').classes('text-xs text-gray-400')
-                ui.link(
-                    '如果你想继续折腾，也可以看看基于这个小工具的更多工具链',
-                    SPONSOR_TOOLCHAIN_URL,
-                    new_tab=True,
-                ).classes('text-xs text-blue-500 hover:text-blue-700 hover:underline')
-            with ui.row().classes('w-full justify-end'):
-                ui.button('关闭', on_click=self.sponsor_dialog.close).props('flat color=grey-7')
+
 
     def _mark_interaction(self, e=None):
         if not self.current_search_interacted:
@@ -518,24 +497,23 @@ class DanbooruSearchUI:
 
     def build_page(self):
         self.client = ui.context.client
-        ui.colors(primary='#4A90E2', secondary='#5E6C84', accent='#FF6B6B')
+        ui.colors(primary='#6366f1', secondary='#8b5cf6', accent='#ec4899')
         ui.add_head_html('''
             <meta name="description" content="基于语义匹配的 Danbooru 标签搜索引擎，支持中英双语描述、多维匹配、智能分词与共现关联推荐。">
             <meta name="keywords" content="Danbooru, AI绘画, Stable Diffusion, 提示词, 标签搜索, RAG, Prompt, NovelAI">
-            <meta name="google-site-verification" content="cx4sl9Mb172GUFL556JFwKCP-pT3naQcmlMriy5B8ls" />
-
             <style>
+                /* 功能类（刷新逻辑依赖，勿删） */
                 .nsfw-blur-cell      { filter: blur(8px); opacity: 0.5; transition: all 0.3s ease;
                                        pointer-events: none !important; user-select: none !important; }
                 .nsfw-checkbox-disabled { pointer-events: none !important; opacity: 0.3 !important; }
                 .nsfw-row-blocked    { cursor: not-allowed !important; }
                 .related-item { transition: background-color 0.15s ease; }
-                .related-item:hover { background-color: rgba(74, 144, 226, 0.04); }
-                .tag-link { text-decoration: none; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; }
+                .related-item:hover { background-color: rgba(99,102,241,0.05); }
+                .tag-link { text-decoration: none; font-family: 'Consolas','Monaco','Courier New',monospace; }
                 .tag-link:hover { text-decoration: underline; }
                 .weight-chip { display: inline-flex; align-items: center; gap: 2px;
                                border-radius: 16px; padding: 2px 6px 2px 4px;
-                               background: #e3edf7; border: 1px solid #b3cde8;
+                               background: #eef2ff; border: 1px solid #c7d2fe;
                                font-size: 12px; margin: 3px; white-space: nowrap; }
                 .weight-chip.boosted  { background: #fff3e0; border-color: #ffb74d; }
                 .weight-chip.reduced  { background: #f3e5f5; border-color: #ce93d8; }
@@ -567,27 +545,24 @@ class DanbooruSearchUI:
                     max-width: 36% !important;
                     overflow: hidden;
                 }
-
-                /* 窄屏回退为上下排列 */
                 @media (max-width: 900px) {
-                    .two-col-layout {
-                        flex-wrap: wrap !important;
-                    }
+                    .two-col-layout { flex-wrap: wrap !important; }
                     .two-col-layout > .col-left,
-                    .two-col-layout > .col-right {
-                        flex: 1 1 100% !important;
-                        max-width: 100% !important;
-                    }
+                    .two-col-layout > .col-right { flex: 1 1 100% !important; max-width: 100% !important; }
                 }
 
+                /* 主题美化 */
+                body { background: #f1f5f9; }
+                .dt-header { background: linear-gradient(135deg,#6366f1 0%,#8b5cf6 55%,#ec4899 100%);
+                             border-radius: 18px; color: #fff;
+                             box-shadow: 0 10px 30px -12px rgba(99,102,241,.5); }
+                .dt-badge { background: rgba(255,255,255,.20); border: 1px solid rgba(255,255,255,.35); }
+                .dt-card { border: 1px solid #e2e8f0; border-radius: 16px; background: #fff;
+                           box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 12px 28px -16px rgba(15,23,42,.18); }
+                .nicegui-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+                .nicegui-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+                .nicegui-scroll::-webkit-scrollbar-track { background: transparent; }
             </style>
-            <script async src="https://www.googletagmanager.com/gtag/js?id=G-QPB7EEPR5G"></script>
-            <script>
-                window.dataLayer = window.dataLayer || [];
-                function gtag(){dataLayer.push(arguments);}
-                gtag('js', new Date());
-                gtag('config', 'G-QPB7EEPR5G');
-            </script>
             <script>
                 document.addEventListener('DOMContentLoaded', function() {
                     function openExternal(root) {
@@ -608,33 +583,24 @@ class DanbooruSearchUI:
             </script>
         ''')
 
-        self._build_sponsor_dialog()
+        with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-5 dt-shell'):
 
-        with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
+            # ── 页眉 ──
+            with ui.row().classes('w-full dt-header p-5 items-center justify-between flex-wrap gap-3'):
+                with ui.column().classes('gap-1'):
+                    ui.label('Danbooru 标签语义搜索').classes('text-2xl font-bold')
+                    ui.label('基于语义匹配的标签搜索引擎 · 中英双语 · 多维匹配与共现关联推荐').classes('text-sm opacity-90')
+                with ui.row().classes('items-center gap-2'):
+                    ui.label('自托管版本').classes('dt-badge text-xs px-3 py-1 rounded-full')
 
             # ── 初始化提示 ──
             self.init_banner = ui.card().classes(
-                'w-full bg-blue-50 border-l-4 border-blue-400'
+                'w-full dt-card bg-blue-50/60 border-l-4 border-blue-400 overflow-hidden'
             )
             with self.init_banner:
-                with ui.row().classes('items-center gap-3 p-2'):
-                    ui.spinner(size='sm')
-                    ui.label('引擎初始化中，请稍候…约需 5~10 分钟').classes('text-sm text-blue-700')
-                from platform_utils import PLATFORM
-                _alt_url = (
-                    'https://www.modelscope.cn/studios/SAkizuki/DanbooruSearchOnline'
-                    if PLATFORM == 'hf' else
-                    'https://huggingface.co/spaces/SAkizuki/DanbooruSearch'
-                )
-                ui.html(
-                    f'初始化期间，您可以使用'
-                    f'<a href="{_alt_url}" target="_blank" rel="noopener noreferrer" '
-                    f'class="text-blue-600 hover:text-blue-800 underline font-bold">备用服务</a>'
-                    f'，或先查看'
-                    f'<a href="http://intro.sakizuki.site/index.html" '
-                    f'target="_blank" rel="noopener noreferrer" '
-                    f'class="text-blue-600 hover:text-blue-800 underline font-bold">使用指南</a>'
-                ).classes('text-xs text-blue-600 px-6 pb-3')
+                with ui.row().classes('items-center gap-3 px-4 py-3'):
+                    ui.spinner(size='sm', color='primary')
+                    ui.label('引擎初始化中，请稍候…首次加载模型约需 1~3 分钟').classes('text-sm text-blue-700')
             self.init_banner.set_visibility(not DanbooruTagger.is_ready())
             if not DanbooruTagger.is_ready():
                 asyncio.ensure_future(self._hide_banner_when_ready())
@@ -649,7 +615,7 @@ class DanbooruSearchUI:
             self._build_search_card()
 
             # ── 3~5. 结果区域（搜索前隐藏）──
-            self.results_section = ui.column().classes('w-full gap-4')
+            self.results_section = ui.column().classes('w-full gap-5')
             self.results_section.set_visibility(False)
 
             with self.results_section:
@@ -666,48 +632,35 @@ class DanbooruSearchUI:
             with ui.element('div').classes('w-full text-center py-4 mt-2'):
                 self.search_count_label = ui.html('正在加载数据...').classes('text-xs text-gray-400')
                 self._update_footer_text()
-                ui.button(SPONSOR_NOTICE_TEXT, on_click=self.sponsor_dialog.open) \
-                    .props('flat dense no-caps color=grey-6') \
-                    .classes('text-xs mt-1')
 
     # ── 公告栏（标签组 + MCP）─────────────────────────────────────────────
 
     def _build_group_notice(self):
         self.mcp_notice = ui.card().classes(
-            'w-full bg-green-50 border-l-4 border-green-500 p-0 overflow-hidden'
+            'w-full dt-card bg-emerald-50 border-l-4 border-emerald-500 overflow-hidden'
         )
         with self.mcp_notice:
             with ui.column().classes('px-4 py-3 w-full gap-2'):
-                # ── 画师查找公告 ──
                 with ui.row().classes('items-center justify-between w-full'):
-                    with ui.row().classes('items-center gap-1'):
-                        ui.label('🧪 新功能：推荐擅长画师（beta）').classes('text-sm font-bold text-green-800')
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('tips_and_updates', color='emerald-700').classes('text-base')
+                        ui.label('功能提示').classes('text-sm font-bold text-emerald-800')
                     ui.button(icon='close').props('flat dense round color=grey-6') \
                         .on_click(self._dismiss_mcp_notice)
                 ui.html(
-                    '基于标签共现数据，根据已选标签查找对应的擅长画师。'
-                    '鼠标悬停画师行可查看该画师最常画的标签'
-                ).classes('text-xs text-green-900')
+                    '<b>推荐擅长画师（Beta）</b>：基于标签共现数据，根据已选标签查找对应的擅长画师，'
+                    '鼠标悬停画师行可查看其最常画的标签。'
+                ).classes('text-xs text-emerald-900')
                 ui.separator().classes('my-1')
-                # ── 标签组扩展 ──
                 ui.html(
-                    '【标签组扩展】 勾选标签后，搜索结果下方会出现<b>同类标签</b>区域，'
+                    '<b>同类标签扩展</b>：勾选标签后，搜索结果下方会出现<b>同类标签</b>区域，'
                     '展示已选标签所属分组中的其他标签，勾选即可加入已选。'
-                ).classes('text-xs text-green-900')
+                ).classes('text-xs text-emerald-900')
                 ui.separator().classes('my-1')
-                # ── MCP 服务 ──
                 ui.html(
-                    '【MCP 服务】 支持通过 MCP 协议接入 AI Agent（如 Claude Desktop）。'
-                    '免配置托管版体验：'
-                    '<a href="https://huggingface.co/spaces/SAkizuki/WenQiuYue" '
-                    'target="_blank" rel="noopener noreferrer" '
-                    'class="text-green-700 font-bold underline">问秋月 Space</a>，'
-                    '<span class="text-gray-500 ml-1">API 额度有限，仅供体验。</span>'
-                    '&nbsp;'
-                    '<a href="https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline#mcp-接口" '
-                    'target="_blank" rel="noopener noreferrer" '
-                    'class="text-green-700 underline">接入文档 →</a>'
-                ).classes('text-xs text-green-900')
+                    '<b>MCP 服务</b>：本服务已内置 MCP 端点 <code>/mcp/mcp</code>，'
+                    '可直接接入支持 MCP 的 AI Agent（如 Claude Desktop）。'
+                ).classes('text-xs text-emerald-900')
 
     def _dismiss_mcp_notice(self):
         if self.mcp_notice:
@@ -717,45 +670,33 @@ class DanbooruSearchUI:
     # ── 注意事项 ──────────────────────────────────────────────────────────
 
     def _build_notice(self):
-        with ui.card().classes('w-full bg-orange-50 border-l-4 border-orange-500 p-0 overflow-hidden'):
+        with ui.card().classes('w-full dt-card bg-amber-50 border-l-4 border-amber-500 overflow-hidden'):
             with ui.expansion(value=True).classes('w-full') as notice_expansion:
                 self.notice_expansion = notice_expansion
                 notice_expansion.on('update:model-value', lambda _: self._save_config())
                 notice_expansion.add_slot('header', '''
                     <div class="flex items-center gap-2 px-4 py-2 w-full flex-wrap">
-                        <span class="text-base font-bold text-orange-800">⚠️ 注意事项 / Note</span>
-                        <span v-if="!props.expanded" class="text-sm text-gray-600 ml-1">
-                             如果觉得好用，请点击顶部给本 Space 点个
-                            <strong>Like ❤️</strong>，或前往 GitHub 点个 <strong>Star ⭐</strong>！
-                        </span>
+                        <span class="text-base font-bold text-amber-800">⚠️ 注意事项 / Note</span>
                     </div>
                 ''')
                 ui.markdown("""
-- **AI 辅助**：基于语义匹配，结果未必绝对准确(Results may contain errors)
-- **内容警告**：查找结果可能包含 NSFW 内容 (May include NSFW content)
-- **检索限制**：仅支持中/英双语查找 ，更推荐中文(CN/EN only,CN is preferred)
-- **标签范围**：仅显示特征、角色与作品标签，且频数须 ≥ 100 (General, Character & Copyright only, Freq ≥ 100)
-- **集成与接口**：[ComfyUI 插件](https://github.com/SuzumiyaAkizuki/ComfyUI-DanbooruSearcher) · [API 文档](/api/docs) · [MCP 接入](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline#mcp-接口)
-- **支持作者**：如果觉得好用，欢迎点击顶部给本 Space 点个 **Like ❤️**，或前往 [GitHub](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline) 点个 **Star ⭐**！也可以自愿赞赏一点维护成本；不影响任何功能使用。
-- **🚀 首次使用？[点击查看使用指南](http://intro.sakizuki.site/index.html)**，了解五种搜索模式与进阶技巧
+- **AI 辅助**：基于语义匹配，结果未必绝对准确（Results may contain errors）
+- **内容警告**：查找结果可能包含 NSFW 内容（May include NSFW content）
+- **检索限制**：仅支持中 / 英双语查找，更推荐中文（CN/EN only, CN is preferred）
+- **标签范围**：仅显示特征、角色与作品标签，且频数须 ≥ 100（General, Character & Copyright only, Freq ≥ 100）
+- **集成与接口**：[API 文档](/api/docs) · MCP 端点 `/mcp/mcp`（接入本地 AI Agent）
+- **来源**：本工具派生自 [SuzumiyaAkizuki/DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)（GPL-3.0），在此致谢原项目。
 """).classes('text-sm text-gray-800 px-4 pb-3')
 
     # ── 搜索卡片 ─────────────────────────────────────────────────────────
 
     def _build_search_card(self):
-        with ui.card().classes('w-full'):
-            with ui.row().classes('items-center gap-2 mb-2'):
+        with ui.card().classes('w-full dt-card p-5'):
+            with ui.row().classes('items-center gap-3 mb-3'):
                 ui.icon('search', size='2em', color='primary')
-                ui.label('Danbooru 标签模糊搜索').classes('text-2xl font-bold text-gray-800')
-            ui.label(
-                '基于语义匹配的标签搜索引擎，支持多维匹配与共现关联推荐。'
-            ).classes('text-sm text-gray-500 -mt-1 mb-1')
-            ui.html(
-                '<a href="http://intro.sakizuki.site/index.html" '
-                'target="_blank" rel="noopener noreferrer" '
-                'class="text-blue-600 hover:text-blue-800 underline font-medium">'
-                '查看工具链介绍 / 使用指南 →</a>'
-            ).classes('text-sm mb-3')
+                with ui.column().classes('gap-0'):
+                    ui.label('Danbooru 标签模糊搜索').classes('text-xl font-bold text-gray-800')
+                    ui.label('输入自然语言描述或模糊概念，系统将进行语义匹配与共现推荐').classes('text-sm text-gray-500')
 
             with ui.row().classes('w-full gap-3 items-stretch'):
                 self.search_input = ui.textarea(
@@ -877,7 +818,7 @@ class DanbooruSearchUI:
     # ── 已选标签栏 ────────────────────────────────────────────────────────
 
     def _build_selection_bar(self):
-        self.selection_bar_card = ui.card().classes('w-full bg-blue-50 border border-blue-200')
+        self.selection_bar_card = ui.card().classes('w-full dt-card bg-indigo-50/60 border border-indigo-200')
         with self.selection_bar_card:
             with ui.row().classes('w-full items-center justify-between'):
                 with ui.row().classes('items-center gap-2'):
@@ -1091,9 +1032,11 @@ class DanbooruSearchUI:
         self.two_col_container = ui.element('div').classes('w-full two-col-layout')
         with self.two_col_container:
             # ── 左栏：语义匹配结果（表格）──
-            with ui.card().classes('col-left'):
+            with ui.card().classes('col-left dt-card p-4'):
                 with ui.row().classes('items-center justify-between mb-2 w-full'):
-                    ui.label('匹配标签结果').classes('font-bold text-lg text-gray-800')
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('table_chart', color='primary')
+                        ui.label('匹配标签结果').classes('font-bold text-lg text-gray-800')
                     ui.button('复制全部标签', icon='content_copy', on_click=self._copy_all_tags) \
                         .props('dense flat color=primary').classes('text-sm')
 
@@ -1194,6 +1137,7 @@ class DanbooruSearchUI:
                 ui.separator().classes('my-2')
                 with ui.row().classes('items-center justify-between w-full mb-1'):
                     with ui.row().classes('items-center gap-2'):
+                        ui.icon('category', color='grey-6')
                         ui.label('同类标签').classes('font-bold text-sm text-gray-600')
                         with ui.icon('info_outline', size='xs', color='grey').classes('cursor-help'):
                             with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
@@ -1205,10 +1149,11 @@ class DanbooruSearchUI:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
             # ── 右栏：推荐画师 + 关联推荐 ──
-            with ui.card().classes('col-right'):
+            with ui.card().classes('col-right dt-card p-4'):
                 # 推荐画师
                 with ui.row().classes('items-center justify-between w-full mb-2'):
                     with ui.row().classes('items-center gap-2'):
+                        ui.icon('palette', color='pink')
                         ui.label('推荐擅长画师(Beta)').classes('font-bold text-lg text-gray-800')
                         with ui.icon('info_outline', size='sm', color='grey').classes('cursor-help'):
                             with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
@@ -1216,7 +1161,7 @@ class DanbooruSearchUI:
                                     '基于标签-画师 NPMI 共现数据，根据您当前已选的标签，推荐擅长这些元素的画师。<br>悬停画师行可查看与该画师共现关联最强的标签。').style(
                                     'font-size:14px;line-height:1.5;')
 
-                self.artist_rec_list = ui.column().classes('w-full gap-0').style('max-height: 420px; overflow-y: auto;')
+                self.artist_rec_list = ui.column().classes('w-full gap-0 nicegui-scroll').style('max-height: 420px; overflow-y: auto;')
                 with self.artist_rec_list:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
@@ -1225,6 +1170,7 @@ class DanbooruSearchUI:
                 # 关联推荐
                 with ui.row().classes('items-center justify-between w-full mb-2'):
                     with ui.row().classes('items-center gap-2'):
+                        ui.icon('auto_awesome', color='primary')
                         ui.label('关联推荐').classes('font-bold text-lg text-gray-800')
                         with ui.icon('info_outline', size='sm', color='grey').classes('cursor-help'):
                             with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
@@ -2342,21 +2288,6 @@ if __name__ in {'__main__', '__mp_main__'}:
             except Exception:
                 pass
 
-
-    @app.get('/googlebd34b54f8562aa06.html')
-    def google_verification():
-        return PlainTextResponse('google-site-verification: googlebd34b54f8562aa06.html')
-
-    @app.get('/robots.txt')
-    def robots_txt():
-        content = (
-            'User-agent: *\n'
-            'Allow: /$\n'
-            'Disallow: /api/\n'
-            'Disallow: /_nicegui/\n'
-            'Disallow: /socket.io/\n'
-        )
-        return PlainTextResponse(content)
 
 
     @app.get('/robots.txt')
