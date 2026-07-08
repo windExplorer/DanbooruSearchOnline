@@ -497,7 +497,7 @@ class DanbooruSearchUI:
 
     def build_page(self):
         self.client = ui.context.client
-        ui.colors(primary='#6366f1', secondary='#8b5cf6', accent='#ec4899')
+        ui.colors(primary='#4A90E2', secondary='#5E6C84', accent='#FF6B6B')
         ui.add_head_html('''
             <meta name="description" content="基于语义匹配的 Danbooru 标签搜索引擎，支持中英双语描述、多维匹配、智能分词与共现关联推荐。">
             <meta name="keywords" content="Danbooru, AI绘画, Stable Diffusion, 提示词, 标签搜索, RAG, Prompt, NovelAI">
@@ -508,25 +508,87 @@ class DanbooruSearchUI:
                 .nsfw-checkbox-disabled { pointer-events: none !important; opacity: 0.3 !important; }
                 .nsfw-row-blocked    { cursor: not-allowed !important; }
                 .related-item { transition: background-color 0.15s ease; }
-                .related-item:hover { background-color: rgba(99,102,241,0.05); }
+                .related-item:hover { background-color: rgba(74,144,226,0.04); }
                 .tag-link { text-decoration: none; font-family: 'Consolas','Monaco','Courier New',monospace; }
                 .tag-link:hover { text-decoration: underline; }
                 .weight-chip { display: inline-flex; align-items: center; gap: 2px;
-                               border-radius: 16px; padding: 2px 6px 2px 4px;
-                               background: #eef2ff; border: 1px solid #c7d2fe;
-                               font-size: 12px; margin: 3px; white-space: nowrap; }
+                               border-radius: 16px; padding: 3px 7px 3px 5px;
+                               background: #e3edf7; border: 1px solid #b3cde8;
+                               font-size: 13px; margin: 3px; white-space: nowrap; }
                 .weight-chip.boosted  { background: #fff3e0; border-color: #ffb74d; }
                 .weight-chip.reduced  { background: #f3e5f5; border-color: #ce93d8; }
-                .weight-btn { cursor: pointer; width: 18px; height: 18px; border-radius: 50%;
+                .weight-btn { cursor: pointer; width: 20px; height: 20px; border-radius: 50%;
                               display: inline-flex; align-items: center; justify-content: center;
-                              font-size: 13px; font-weight: bold; line-height: 1;
+                              font-size: 14px; font-weight: bold; line-height: 1;
                               border: none; background: rgba(0,0,0,0.08);
                               color: #555; transition: background 0.15s; padding: 0; }
                 .weight-btn:hover { background: rgba(0,0,0,0.18); }
-                .weight-label { font-family: Consolas, Monaco, monospace; font-size: 11px;
+                .weight-label { font-family: Consolas, Monaco, monospace; font-size: 12px;
                                 color: #888; min-width: 28px; text-align: center; }
 
-                /* 强制双栏并排 */
+                /* 标签搜索：左右结构（搜索/已选在左常驻，结果在右） */
+                /* q-tab-panel 是 flex column + align-items:flex-start，子项按内容宽左对齐，
+                   故 width:100% 撑满整行；height:100% 让左/右栏填满面板并各自内部滚动 */
+                .search-split { display: flex !important; width: 100% !important; height: 100% !important;
+                                gap: 16px !important; align-items: stretch !important; overflow: hidden !important; }
+                .search-left {
+                    flex: 0 0 300px !important; max-width: 300px !important;
+                    height: 100% !important; overflow-y: auto; padding-right: 4px;
+                }
+                .search-right { flex: 1 1 auto !important; min-width: 0 !important; min-height: 0 !important;
+                                height: 100% !important; overflow-y: auto; }
+                @media (max-width: 900px) {
+                    .search-split { flex-direction: column !important; height: auto !important; overflow: visible !important; }
+                    .search-left { flex: 1 1 100% !important; max-width: 100% !important;
+                                   height: auto !important; max-height: 45vh; overflow-y: auto; }
+                    .search-right { height: auto !important; min-height: 45vh; }
+                }
+
+                /* 搜索输入框：更像舒展的多行文本域，而非单行 input */
+                .search-textarea { width: 100% !important; }
+                .search-textarea .q-field__control {
+                    border-radius: 12px !important;
+                    background: #f8fafc !important;
+                    border: 1.5px solid #e2e8f0 !important;
+                    min-height: 96px !important;
+                    padding: 4px 6px !important;
+                    transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+                }
+                .search-textarea .q-field__native {
+                    font-size: 1rem !important; line-height: 1.65 !important;
+                    padding: 10px 12px !important; color: #1f2937 !important;
+                    resize: none !important;
+                }
+                .search-textarea .q-field__native::placeholder { color: #94a3b8 !important; font-size: 1rem !important; }
+                .search-textarea.q-field--focused .q-field__control {
+                    background: #fff !important;
+                    border-color: #4A90E2 !important;
+                    box-shadow: 0 0 0 3px rgba(74,144,226,.15) !important;
+                }
+
+                /* 搜索按钮：醒目主色按钮（图标 + 文字，整行） */
+                .search-btn {
+                    width: 100% !important;
+                    border-radius: 12px !important;
+                    background: linear-gradient(135deg,#4A90E2 0%,#357ABD 100%) !important;
+                    color: #fff !important;
+                    font-weight: 600 !important;
+                    font-size: 1rem !important;
+                    padding: 12px 0 !important;
+                    text-transform: none !important;
+                    letter-spacing: .02em !important;
+                    box-shadow: 0 4px 12px rgba(74,144,226,.28) !important;
+                    transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+                }
+                .search-btn:hover { filter: brightness(1.05);
+                    box-shadow: 0 6px 18px rgba(74,144,226,.38) !important; transform: translateY(-1px); }
+                .search-btn:active { transform: translateY(0);
+                    box-shadow: 0 2px 8px rgba(74,144,226,.28) !important; }
+                .search-btn[disabled] { opacity: .65 !important; filter: grayscale(.2); }
+                .search-btn .search-btn-icon { font-size: 1.2rem !important; margin-right: 8px !important; }
+                .search-btn .search-btn-text { font-size: 1rem !important; }
+
+                /* 结果两栏并排 + 各自内部滚动（不再撑长整页） */
                 .two-col-layout {
                     display: flex !important;
                     flex-wrap: nowrap !important;
@@ -534,34 +596,50 @@ class DanbooruSearchUI:
                     gap: 16px !important;
                 }
                 .two-col-layout > .col-left {
-                    flex: 0 0 62% !important;
-                    min-width: 0 !important;
-                    max-width: 62% !important;
-                    overflow: hidden;
+                    flex: 0 0 62% !important; min-width: 0 !important; max-width: 62% !important;
                 }
                 .two-col-layout > .col-right {
-                    flex: 0 0 36% !important;
-                    min-width: 0 !important;
-                    max-width: 36% !important;
-                    overflow: hidden;
+                    flex: 0 0 36% !important; min-width: 0 !important; max-width: 36% !important;
                 }
-                @media (max-width: 900px) {
+                @media (max-width: 1100px) {
                     .two-col-layout { flex-wrap: wrap !important; }
                     .two-col-layout > .col-left,
                     .two-col-layout > .col-right { flex: 1 1 100% !important; max-width: 100% !important; }
                 }
 
-                /* 主题美化 */
-                body { background: #f1f5f9; }
-                .dt-header { background: linear-gradient(135deg,#6366f1 0%,#8b5cf6 55%,#ec4899 100%);
-                             border-radius: 18px; color: #fff;
-                             box-shadow: 0 10px 30px -12px rgba(99,102,241,.5); }
-                .dt-badge { background: rgba(255,255,255,.20); border: 1px solid rgba(255,255,255,.35); }
-                .dt-card { border: 1px solid #e2e8f0; border-radius: 16px; background: #fff;
-                           box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 12px 28px -16px rgba(15,23,42,.18); }
+                /* 主题美化（沉稳、干净，向原版蓝调收敛） */
+                /* 整页禁止浏览器级滚动条：窗体锁视口高度，仅在内部容器滚动 */
+                html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; }
+                body { background: #f6f8fb; font-size: 15px; line-height: 1.6; }
+                /* 去掉 NiceGUI 页面默认 16px 内边距，让标题栏能真正贴顶、下方内容对齐 */
+                .nicegui-content { padding: 0 !important; height: 100vh; overflow: hidden !important; }
+                /* 主容器：纵向 flex 占满视口；除结果面板外均不伸缩，面板 flex:1 并内部滚动 */
+                /* 全屏页面：纵向 flex，顶部导航栏全宽固定、内容区受限居中并内部滚动 */
+                .dt-page { width: 100%; height: 100vh; display: flex !important;
+                           flex-direction: column !important; overflow: hidden !important; gap: 20px; }
+                .dt-page > * { flex: 0 0 auto !important; }
+                .dt-page > .dt-panels { flex: 1 1 auto !important; min-height: 0 !important;
+                                        overflow: hidden !important; }
+                /* 顶部导航栏：全宽贴顶条（标题 + 标签栏 + 徽章），不再用 100vw+负边距的 hack */
+                .dt-header { width: 100%; background: #fff; border: none;
+                             border-bottom: 1px solid #e3e8ef;
+                             box-shadow: 0 1px 3px rgba(15,23,42,.05);
+                             position: relative; z-index: 5; }
+                /* 导航栏内的标签：去除卡片底色，融入导航条 */
+                .dt-nav-tabs { background: transparent !important; min-height: auto !important; }
+                /* 标签页面板填满面板区且自身不滚动（滚动下放到左/右栏） */
+                .q-tab-panel { height: 100% !important; overflow: hidden !important; }
+                /* 提升最小字号，原为 12px(text-xs)，避免文字过小 */
+                .text-xs { font-size: 0.875rem !important; }
+                .dt-badge { background: #eaf2fb; border: 1px solid #cfe0f3; color: #4A90E2; }
+                .dt-card { background: #fff; border: 1px solid #e3e8ef; border-radius: 14px;
+                           box-shadow: 0 1px 3px rgba(15,23,42,.05), 0 1px 2px rgba(15,23,42,.04); }
                 .nicegui-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
                 .nicegui-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
                 .nicegui-scroll::-webkit-scrollbar-track { background: transparent; }
+
+                /* 结果两栏在视口内各自内部滚动，避免整页无限下拉 */
+                .col-scroll { max-height: calc(100vh - 170px); overflow-y: auto; }
             </style>
             <script>
                 document.addEventListener('DOMContentLoaded', function() {
@@ -583,19 +661,29 @@ class DanbooruSearchUI:
             </script>
         ''')
 
-        with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-5 dt-shell'):
+        # ── 全屏页面：顶部导航栏（全宽）+ 内容区（受限居中、内部滚动）──
+        with ui.element('div').classes('dt-page'):
 
-            # ── 页眉 ──
-            with ui.row().classes('w-full dt-header p-5 items-center justify-between flex-wrap gap-3'):
-                with ui.column().classes('gap-1'):
-                    ui.label('Danbooru 标签语义搜索').classes('text-2xl font-bold')
-                    ui.label('基于语义匹配的标签搜索引擎 · 中英双语 · 多维匹配与共现关联推荐').classes('text-sm opacity-90')
-                with ui.row().classes('items-center gap-2'):
-                    ui.label('自托管版本').classes('dt-badge text-xs px-3 py-1 rounded-full')
+            # ── 顶部导航栏（全宽：标题 + 标签栏 + 徽章）──
+            with ui.row().classes('w-full dt-header'):
+                with ui.row().classes('w-full max-w-[1500px] mx-auto px-4 py-3 items-center justify-between flex-wrap gap-3'):
+                    # 左：图标 + 标题
+                    with ui.row().classes('items-center gap-3'):
+                        ui.icon('auto_awesome', size='2.2em', color='primary')
+                        with ui.column().classes('gap-0.5'):
+                            ui.label('Danbooru 标签语义搜索').classes('text-2xl font-bold text-gray-800')
+                            ui.label('基于语义匹配的标签搜索引擎 · 中英双语 · 多维匹配与共现关联推荐').classes('text-sm text-gray-500')
+                    # 右：标签栏 + 徽章
+                    with ui.row().classes('items-center gap-4'):
+                        self.main_tabs = ui.tabs().classes('dt-nav-tabs')
+                        with self.main_tabs:
+                            ui.tab('标签搜索', icon='search')
+                            ui.tab('使用说明', icon='menu_book')
+                        ui.label('自托管版本').classes('dt-badge text-xs px-3 py-1 rounded-full')
 
             # ── 初始化提示 ──
             self.init_banner = ui.card().classes(
-                'w-full dt-card bg-blue-50/60 border-l-4 border-blue-400 overflow-hidden'
+                'w-full max-w-[1500px] mx-auto dt-card bg-blue-50/60 border-l-4 border-blue-400 overflow-hidden'
             )
             with self.init_banner:
                 with ui.row().classes('items-center gap-3 px-4 py-3'):
@@ -605,32 +693,60 @@ class DanbooruSearchUI:
             if not DanbooruTagger.is_ready():
                 asyncio.ensure_future(self._hide_banner_when_ready())
 
-            # ── 0. 公告栏（同类标签 + MCP）──
-            self._build_group_notice()
+            self.tab_panels = ui.tab_panels(self.main_tabs, value='标签搜索').classes('w-full max-w-[1500px] mx-auto dt-panels')
 
-            # ── 1. 注意事项 ──
-            self._build_notice()
+            with self.tab_panels:
+                # ── 标签页 1：标签搜索（左右结构：搜索左 / 结果右）──
+                with ui.tab_panel('标签搜索'):
+                    with ui.element('div').classes('search-split'):
+                        # ── 左栏：搜索（常驻，不随结果滚动）──
+                        with ui.column().classes('search-left gap-4'):
+                            self._build_search_card()
 
-            # ── 2. 搜索卡片 ──
-            self._build_search_card()
+                        # ── 右栏：已选/分词（顶部常驻）+ 结果区 ──
+                        with ui.column().classes('search-right'):
+                            # 已选标签 + 分词筛选（置于结果区最上方，搜索前隐藏）
+                            self.sel_kw_section = ui.column().classes('w-full gap-4')
+                            self.sel_kw_section.set_visibility(False)
+                            with self.sel_kw_section:
+                                self._build_selection_bar()
+                                self.keywords_container = ui.row().classes('gap-2 items-center flex-wrap')
 
-            # ── 3~5. 结果区域（搜索前隐藏）──
-            self.results_section = ui.column().classes('w-full gap-5')
-            self.results_section.set_visibility(False)
+                            # 结果区（内部滚动）
+                            self.results_section = ui.column().classes('w-full gap-5')
+                            self.results_section.set_visibility(False)
+                            with self.results_section:
+                                self._build_results_columns()
 
-            with self.results_section:
-                # ── 3. 已选标签栏 ──
-                self._build_selection_bar()
+                            # 空状态（未搜索时展示，搜索后隐藏）—— 右栏内水平居中、靠上排列
+                            self.empty_state = ui.column().classes(
+                                'w-full items-center text-center gap-6 pt-20') \
+                                .style('min-height: 100%;')
+                            with self.empty_state:
+                                # 圆形图标徽章（明显可见，避免近乎隐形）
+                                with ui.row().classes(
+                                        'items-center justify-center rounded-full bg-blue-50') \
+                                        .style('width:96px;height:96px;'):
+                                    ui.icon('search', size='2.8rem', color='primary')
+                                ui.label('还没有搜索结果').classes(
+                                    'text-2xl font-bold text-gray-500 text-center')
+                                ui.label('在左侧描述你想找的画面，点击「搜索」即可获得语义匹配与共现推荐的标签') \
+                                    .classes('text-sm text-gray-400 text-center max-w-md leading-relaxed')
+                                with ui.row().classes(
+                                        'items-center gap-2 mt-1 bg-amber-50 px-4 py-2 rounded-full'):
+                                    ui.icon('lightbulb', color='amber').classes('text-lg')
+                                    ui.label('小贴士：支持自然语言描述，例如「白裙少女在雨中奔跑」') \
+                                        .classes('text-xs text-amber-700 text-center')
 
-                # ── 4. 分词筛选 chips ──
-                self.keywords_container = ui.row().classes('gap-2 items-center flex-wrap')
+                # ── 标签页 2：使用说明（注意事项 + 功能 + MCP）──
+                with ui.tab_panel('使用说明'):
+                    self._build_notice()
+                    self._build_group_notice()
+                    self._build_mcp_guide()
 
-                # ── 5. 两栏结果 ──
-                self._build_results_columns()
-
-            # ── 6. 底部 ──
-            with ui.element('div').classes('w-full text-center py-4 mt-2'):
-                self.search_count_label = ui.html('正在加载数据...').classes('text-xs text-gray-400')
+            # ── 整页底部居中：累计搜索 / 访问统计 ──
+            with ui.element('div').classes('w-full max-w-[1500px] mx-auto text-center py-6 mt-2'):
+                self.search_count_label = ui.html('正在加载数据...').classes('text-sm text-gray-400')
                 self._update_footer_text()
 
     # ── 公告栏（标签组 + MCP）─────────────────────────────────────────────
@@ -656,16 +772,45 @@ class DanbooruSearchUI:
                     '<b>同类标签扩展</b>：勾选标签后，搜索结果下方会出现<b>同类标签</b>区域，'
                     '展示已选标签所属分组中的其他标签，勾选即可加入已选。'
                 ).classes('text-xs text-emerald-900')
-                ui.separator().classes('my-1')
-                ui.html(
-                    '<b>MCP 服务</b>：本服务已内置 MCP 端点 <code>/mcp/mcp</code>，'
-                    '可直接接入支持 MCP 的 AI Agent（如 Claude Desktop）。'
-                ).classes('text-xs text-emerald-900')
 
     def _dismiss_mcp_notice(self):
         if self.mcp_notice:
             self.mcp_notice.set_visibility(False)
         self._save_config()
+
+    # ── MCP 接入指南 ───────────────────────────────────────────────────────
+
+    def _build_mcp_guide(self):
+        _, port = get_host_port()
+        mcp_url = f'http://localhost:{port}/mcp/mcp'
+        with ui.card().classes('w-full dt-card overflow-hidden'):
+            with ui.column().classes('px-5 py-4 w-full gap-3'):
+                with ui.row().classes('items-center gap-2'):
+                    ui.icon('api', color='primary').classes('text-xl')
+                    ui.label('MCP 接入方法').classes('text-lg font-bold text-gray-800')
+                    ui.label('Model Context Protocol').classes('dt-badge text-xs px-2 py-0.5 rounded-full')
+                ui.markdown(
+                    '本服务内置 **MCP 端点**，可被支持 MCP 的 AI Agent（如 Claude Desktop、'
+                    'Cursor、Cherry Studio 等）直接调用，实现「对话中搜索标签」。<br>'
+                    '端点地址（Streamable HTTP）：'
+                ).classes('text-sm text-gray-700')
+                ui.label(mcp_url).classes('text-sm font-mono text-primary bg-blue-50 rounded px-3 py-2 w-full')
+                ui.markdown('**以 Claude Desktop 为例**，编辑配置文件并加入以下节点：').classes('text-sm text-gray-700 mt-1')
+                config_json = (
+                    '{\n'
+                    '  "mcpServers": {\n'
+                    '    "danbooru-search": {\n'
+                    f'      "url": "{mcp_url}"\n'
+                    '    }\n'
+                    '  }\n'
+                    '}'
+                )
+                ui.code(config_json).classes('w-full text-xs')
+                ui.markdown(
+                    '- 本地访问用 `localhost`；若部署到服务器，请将地址替换为服务器 IP / 域名（需保证该端口可访问）。\n'
+                    '- 更多接口说明见 [API 文档](/api/docs)。\n'
+                    '- 配置后重启客户端即可在对话中调用本服务的标签搜索能力。'
+                ).classes('text-sm text-gray-700')
 
     # ── 注意事项 ──────────────────────────────────────────────────────────
 
@@ -685,140 +830,179 @@ class DanbooruSearchUI:
 - **检索限制**：仅支持中 / 英双语查找，更推荐中文（CN/EN only, CN is preferred）
 - **标签范围**：仅显示特征、角色与作品标签，且频数须 ≥ 100（General, Character & Copyright only, Freq ≥ 100）
 - **集成与接口**：[API 文档](/api/docs) · MCP 端点 `/mcp/mcp`（接入本地 AI Agent）
+- **本项目仓库**：[windExplorer/DanbooruSearchOnline](https://github.com/windExplorer/DanbooruSearchOnline)（自托管派生版，欢迎 Star / Issue）
 - **来源**：本工具派生自 [SuzumiyaAkizuki/DanbooruSearchOnline](https://github.com/SuzumiyaAkizuki/DanbooruSearchOnline)（GPL-3.0），在此致谢原项目。
-""").classes('text-sm text-gray-800 px-4 pb-3')
+""").classes('text-base text-gray-800 px-4 pb-3')
 
     # ── 搜索卡片 ─────────────────────────────────────────────────────────
 
     def _build_search_card(self):
         with ui.card().classes('w-full dt-card p-5'):
-            with ui.row().classes('items-center gap-3 mb-3'):
-                ui.icon('search', size='2em', color='primary')
-                with ui.column().classes('gap-0'):
-                    ui.label('Danbooru 标签模糊搜索').classes('text-xl font-bold text-gray-800')
-                    ui.label('输入自然语言描述或模糊概念，系统将进行语义匹配与共现推荐').classes('text-sm text-gray-500')
+            # ── 头部 ──
+            with ui.column().classes('gap-1 mb-4'):
+                ui.label('标签搜索').classes('text-xl font-bold text-gray-800 tracking-tight')
+                ui.label('用自然语言描述画面，系统进行语义匹配与共现推荐').classes('text-sm text-gray-500')
 
-            with ui.row().classes('w-full gap-3 items-stretch'):
-                self.search_input = ui.textarea(
-                    placeholder='输入自然语言描述或模糊概念，例如：一个穿着白色水手服的少女在雨中奔跑...'
-                ).classes('flex-grow text-base').props('outlined rows=2')
-                self.search_input.on('keydown.ctrl.enter', self.perform_search)
+            # ── 搜索输入 ──
+            self.search_input = ui.textarea(
+                placeholder='描述你想找的画面，例如：白裙少女在雨中奔跑…'
+            ).classes('search-textarea').props('outlined autogrow rows=3 aria-label="搜索描述"')
+            self.search_input.on('keydown.ctrl.enter', self.perform_search)
 
-                with ui.column().classes('justify-center'):
-                    self.search_btn = ui.button(
-                        '', on_click=self.perform_search, icon='search'
-                    ).classes('px-6 h-full min-h-16').props('unelevated color=dark')
-                    with self.search_btn:
-                        ui.label('搜索').classes('text-sm mt-1')
-                    self.spinner = ui.spinner(size='2em').classes('hidden')
+            # ── 搜索按钮 ──
+            self.search_btn = ui.button(on_click=self.perform_search) \
+                .classes('search-btn').props('unelevated')
+            with self.search_btn:
+                ui.icon('search').classes('search-btn-icon')
+                ui.label('搜索').classes('search-btn-text')
+                self.spinner = ui.spinner(size='1.5em', color='white').classes('hidden')
 
-            self.search_params_row = ui.row().classes('w-full gap-6 items-center mt-3 flex-wrap')
-            with self.search_params_row:
-                with ui.row().classes('items-center gap-2'):
-                    ui.label('搜索模式 (beta)').classes('text-sm text-gray-600')
-                    self.input_search_mode = ui.select(
-                        _SEARCH_MODE_OPTIONS, value='自定义',
-                    ).classes('w-28').props('outlined dense')
-                    self.input_search_mode.on('update:model-value', self._on_search_mode_change)
-                    with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
-                        ui.label('选择模式自动填充对应参数；手动修改参数后自动变为「自定义」').style('font-size:14px;')
+            ui.label('Ctrl + Enter 快捷搜索').classes('text-xs text-gray-400 mt-2 text-center w-full')
 
-                with ui.row().classes('items-center gap-2'):
-                    ui.label('Top K (语义相关)').classes('text-sm text-gray-600')
-                    self.input_top_k = ui.number(value=10, min=1, max=200).classes('w-20') \
-                        .props('outlined dense')
-                    self.input_top_k.on('update:model-value', self._on_param_changed)
-
-                with ui.row().classes('items-center gap-2'):
-                    ui.label('结果上限').classes('text-sm text-gray-600')
-                    self.input_limit = ui.number(value=80, min=10, max=500).classes('w-20') \
-                        .props('outlined dense')
-                    self.input_limit.on('update:model-value', self._on_param_changed)
-
-                with ui.row().classes('items-center gap-2'):
-                    ui.label('热度权重').classes('text-sm text-gray-600')
-                    self.input_weight = ui.slider(min=0.0, max=1.0, value=0.15, step=0.05).classes('w-32')
-                    ui.label().bind_text_from(self.input_weight, 'value', lambda v: f"{v:.2f}") \
-                        .classes('text-sm font-mono text-gray-700 w-8')
-                    self.input_weight.on('update:model-value', self._on_param_changed)
-
-                with ui.switch('显示 NSFW(成人) 内容', value=False).props('color=red') as _nsfw_sw:
-                    if not nsfw_allowed():
+            # ── 搜索选项（可折叠，默认折叠）──
+            ui.separator().classes('my-4')
+            with ui.expansion('搜索选项', icon='settings').classes('w-full'):
+                self.search_params_row = ui.column().classes('w-full gap-3')
+                with self.search_params_row:
+                    # 搜索模式
+                    with ui.row().classes('w-full items-center justify-between gap-2'):
+                        ui.label('搜索模式').classes('text-sm text-gray-600 whitespace-nowrap')
+                        self.input_search_mode = ui.select(
+                            _SEARCH_MODE_OPTIONS, value='自定义',
+                        ).classes('w-32').props('outlined dense')
+                        self.input_search_mode.on('update:model-value', self._on_search_mode_change)
                         with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
-                            ui.label('NSFW 内容在当前平台不可用').style('font-size:14px;')
-                self.input_nsfw = _nsfw_sw
-                if not nsfw_allowed():
-                    self.input_nsfw.disable()
-                else:
-                    self.input_nsfw.on('update:model-value', self.on_nsfw_toggle)
+                            ui.label('选择模式自动填充对应参数；手动修改参数后自动变为「自定义」').style('font-size:14px;')
 
-                with ui.switch('智能分词', value=True).props('color=primary') as _seg_sw:
-                    with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
-                        ui.label('关闭后系统将只匹配完整句子，适用于精准搜索整句。').style('font-size:14px;')
-                self.input_segment = _seg_sw
-                self.input_segment.on('update:model-value', self._on_param_changed)
+                    # 语义 Top K
+                    with ui.row().classes('w-full items-center justify-between gap-2'):
+                        ui.label('语义 Top K').classes('text-sm text-gray-600 whitespace-nowrap')
+                        self.input_top_k = ui.number(value=10, min=1, max=200).classes('w-24') \
+                            .props('outlined dense')
+                        self.input_top_k.on('update:model-value', self._on_param_changed)
 
-            self.advanced_options = ui.expansion('高级选项', icon='tune').classes('w-full mt-2')
-            with self.advanced_options:
-                with ui.column().classes('w-full p-3 gap-4'):
-                    with ui.row().classes('w-full gap-8 flex-wrap'):
-                        with ui.column().classes('gap-2'):
-                            ui.label('匹配层筛选').classes('font-bold text-sm text-gray-700')
-                            display_map = {
-                                '英文': '英文标签', '中文扩展词': '中文扩展词',
-                                '释义': '维基释义', '中文核心词': '中文核心词',
-                                'artist': 'artist',
-                            }
-                            for layer in ['英文', '中文扩展词', '释义', '中文核心词', 'artist']:
-                                cb = ui.checkbox(
-                                    display_map.get(layer, layer), value=True,
-                                    on_change=lambda e, l=layer: self.selected_layers.__setitem__(l, e.value)
-                                ).props('color=primary dense')
-                                self._layer_checkboxes[layer] = cb
+                    # 结果上限
+                    with ui.row().classes('w-full items-center justify-between gap-2'):
+                        ui.label('结果上限').classes('text-sm text-gray-600 whitespace-nowrap')
+                        self.input_limit = ui.number(value=80, min=10, max=500).classes('w-24') \
+                            .props('outlined dense')
+                        self.input_limit.on('update:model-value', self._on_param_changed)
 
-                        with ui.column().classes('gap-2'):
-                            ui.label('类型筛选').classes('font-bold text-sm text-gray-700')
-                            color_map = {'General': 'blue', 'Copyright': 'purple', 'Character': 'green'}
-                            label_map = {
-                                'General': '通用 (General)',
-                                'Copyright': '作品 (Copyright)',
-                                'Character': '角色 (Character)',
-                            }
-                            for cat in ['General', 'Copyright', 'Character']:
-                                cb = ui.checkbox(
-                                    label_map[cat], value=True,
-                                    on_change=lambda e, c=cat: self.selected_cats.__setitem__(c, e.value)
-                                ).props(f'color={color_map[cat]} dense')
-                                self._cat_checkboxes[cat] = cb
+                    # 热度权重（标签 + 实时值在上，滑块占满整行）
+                    with ui.column().classes('w-full gap-1'):
+                        self.input_weight = ui.slider(min=0.0, max=1.0, value=0.15, step=0.05).classes('w-full')
+                        self.input_weight.on('update:model-value', self._on_param_changed)
+                        with ui.row().classes('w-full items-center justify-between'):
+                            ui.label('热度权重').classes('text-sm text-gray-600')
+                            ui.label().bind_text_from(self.input_weight, 'value', lambda v: f"{v:.2f}") \
+                                .classes('text-sm font-mono text-gray-700')
 
-                        with ui.column().classes('gap-2'):
-                            ui.label('表格显示列').classes('font-bold text-sm text-gray-700')
-                            self.sw_semantic = ui.switch('显示语义分', value=False)
-                            self.sw_layer    = ui.switch('显示匹配层', value=False)
-                            self.sw_source   = ui.switch('显示匹配来源', value=False)
-                            self.sw_semantic.on('update:model-value', self._update_table_columns)
-                            self.sw_layer.on('update:model-value', self._update_table_columns)
-                            self.sw_source.on('update:model-value', self._update_table_columns)
-
-                        with ui.column().classes('gap-2'):
-                            ui.label('标签分组模式').classes('font-bold text-sm text-gray-700')
-                            self.input_group_mode = ui.select(
-                                ['off', 'expand', 'diverse'], value='off',
-                            ).classes('w-40').props('outlined dense')
+                    # NSFW 开关（带说明）
+                    with ui.row().classes('w-full items-center justify-between gap-2'):
+                        with ui.column().classes('gap-0'):
+                            ui.label('显示 NSFW 内容').classes('text-sm text-gray-700')
+                            ui.label('成人内容（如不可用则置灰）').classes('text-xs text-gray-400')
+                        _nsfw_sw = ui.switch(value=False).props('color=red')
+                        if not nsfw_allowed():
                             with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
-                                ui.label('off=关闭 | expand=同类召回增强 | diverse=多样性约束').style('font-size:14px;')
-                            self.input_group_mode.on('update:model-value', self._on_param_changed)
+                                ui.label('NSFW 内容在当前平台不可用').style('font-size:14px;')
+                        self.input_nsfw = _nsfw_sw
+                        if not nsfw_allowed():
+                            self.input_nsfw.disable()
+                        else:
+                            self.input_nsfw.on('update:model-value', self.on_nsfw_toggle)
 
-                            self.input_max_per_group = ui.number(
-                                value=2, min=1, max=10,
-                            ).classes('w-20').props('outlined dense')
-                            ui.label('每组最大标签数（diverse 模式）').classes('text-xs text-gray-500')
-                            self.input_max_per_group.on('update:model-value', self._on_param_changed)
+                    # 智能分词 开关（带说明）
+                    with ui.row().classes('w-full items-center justify-between gap-2'):
+                        with ui.column().classes('gap-0'):
+                            ui.label('智能分词').classes('text-sm text-gray-700')
+                            ui.label('关闭后仅匹配完整句子').classes('text-xs text-gray-400')
+                        _seg_sw = ui.switch(value=True).props('color=primary')
+                        with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                            ui.label('关闭后系统将只匹配完整句子，适用于精准搜索整句。').style('font-size:14px;')
+                        self.input_segment = _seg_sw
+                        self.input_segment.on('update:model-value', self._on_param_changed)
+
+            # ── 高级选项（弹窗）──
+            ui.button('高级选项', icon='tune') \
+                .props('flat dense no-caps color=primary full-width') \
+                .classes('mt-3') \
+                .on_click(lambda: self.advanced_dialog.open())
+
+            self.advanced_dialog = ui.dialog()
+            with self.advanced_dialog:
+                with ui.card().classes('w-full max-w-2xl p-5 gap-3'):
+                    with ui.row().classes('w-full items-center justify-between mb-1'):
+                        ui.label('高级选项').classes('text-lg font-bold text-gray-800')
+                        ui.icon('tune', size='1.6rem', color='primary')
+                    with ui.column().classes('w-full gap-4'):
+                        with ui.row().classes('w-full gap-8 flex-wrap'):
+                            with ui.column().classes('gap-2'):
+                                ui.label('匹配层筛选').classes('font-bold text-sm text-gray-700')
+                                display_map = {
+                                    '英文': '英文标签', '中文扩展词': '中文扩展词',
+                                    '释义': '维基释义', '中文核心词': '中文核心词',
+                                    'artist': 'artist',
+                                }
+                                for layer in ['英文', '中文扩展词', '释义', '中文核心词', 'artist']:
+                                    cb = ui.checkbox(
+                                        display_map.get(layer, layer), value=True,
+                                        on_change=lambda e, l=layer: self.selected_layers.__setitem__(l, e.value)
+                                    ).props('color=primary dense')
+                                    self._layer_checkboxes[layer] = cb
+
+                            with ui.column().classes('gap-2'):
+                                ui.label('类型筛选').classes('font-bold text-sm text-gray-700')
+                                color_map = {'General': 'blue', 'Copyright': 'purple', 'Character': 'green'}
+                                label_map = {
+                                    'General': '通用 (General)',
+                                    'Copyright': '作品 (Copyright)',
+                                    'Character': '角色 (Character)',
+                                }
+                                for cat in ['General', 'Copyright', 'Character']:
+                                    cb = ui.checkbox(
+                                        label_map[cat], value=True,
+                                        on_change=lambda e, c=cat: self.selected_cats.__setitem__(c, e.value)
+                                    ).props(f'color={color_map[cat]} dense')
+                                    self._cat_checkboxes[cat] = cb
+
+                            with ui.column().classes('gap-2'):
+                                ui.label('表格显示列').classes('font-bold text-sm text-gray-700')
+                                self.sw_semantic = ui.switch('显示语义分', value=False)
+                                self.sw_layer    = ui.switch('显示匹配层', value=False)
+                                self.sw_source   = ui.switch('显示匹配来源', value=False)
+                                self.sw_semantic.on('update:model-value', self._update_table_columns)
+                                self.sw_layer.on('update:model-value', self._update_table_columns)
+                                self.sw_source.on('update:model-value', self._update_table_columns)
+
+                            with ui.column().classes('gap-2'):
+                                ui.label('标签分组模式').classes('font-bold text-sm text-gray-700')
+                                self.input_group_mode = ui.select(
+                                    ['off', 'expand', 'diverse'], value='off',
+                                ).classes('w-40').props('outlined dense')
+                                with ui.tooltip().props('content-class="bg-black text-white shadow-4"'):
+                                    ui.label('off=关闭 | expand=同类召回增强 | diverse=多样性约束').style('font-size:14px;')
+                                self.input_group_mode.on('update:model-value', self._on_param_changed)
+
+                                self.input_max_per_group = ui.number(
+                                    value=2, min=1, max=10,
+                                ).classes('w-20').props('outlined dense')
+                                ui.label('每组最大标签数（diverse 模式）').classes('text-xs text-gray-500')
+                                self.input_max_per_group.on('update:model-value', self._on_param_changed)
+
+                    ui.button('完成', icon='check', on_click=lambda: self.advanced_dialog.close()) \
+                        .props('unelevated color=primary').classes('self-end mt-1')
+
+            # ── 使用说明 / MCP 跳转 ──
+            ui.button('使用说明 / MCP 接入 →', icon='menu_book') \
+                .props('flat dense no-caps color=primary full-width') \
+                .classes('mt-4') \
+                .on_click(lambda: self.tab_panels.set_value('使用说明'))
 
     # ── 已选标签栏 ────────────────────────────────────────────────────────
 
     def _build_selection_bar(self):
-        self.selection_bar_card = ui.card().classes('w-full dt-card bg-indigo-50/60 border border-indigo-200')
+        self.selection_bar_card = ui.card().classes('w-full dt-card bg-blue-50/60 border border-blue-200')
         with self.selection_bar_card:
             with ui.row().classes('w-full items-center justify-between'):
                 with ui.row().classes('items-center gap-2'):
@@ -892,7 +1076,7 @@ class DanbooruSearchUI:
                         ui.html('&minus;')
                     # 标签名
                     ui.label(display_label).style(
-                        'font-family:Consolas,Monaco,monospace;font-size:12px;'
+                        'font-family:Consolas,Monaco,monospace;font-size:13px;'
                         'color:#2c5282;max-width:240px;overflow:hidden;'
                         'text-overflow:ellipsis;white-space:nowrap;'
                     )
@@ -1032,7 +1216,7 @@ class DanbooruSearchUI:
         self.two_col_container = ui.element('div').classes('w-full two-col-layout')
         with self.two_col_container:
             # ── 左栏：语义匹配结果（表格）──
-            with ui.card().classes('col-left dt-card p-4'):
+            with ui.card().classes('col-left dt-card p-4 col-scroll nicegui-scroll'):
                 with ui.row().classes('items-center justify-between mb-2 w-full'):
                     with ui.row().classes('items-center gap-2'):
                         ui.icon('table_chart', color='primary')
@@ -1149,7 +1333,7 @@ class DanbooruSearchUI:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
             # ── 右栏：推荐画师 + 关联推荐 ──
-            with ui.card().classes('col-right dt-card p-4'):
+            with ui.card().classes('col-right dt-card p-4 col-scroll nicegui-scroll'):
                 # 推荐画师
                 with ui.row().classes('items-center justify-between w-full mb-2'):
                     with ui.row().classes('items-center gap-2'):
@@ -1161,7 +1345,7 @@ class DanbooruSearchUI:
                                     '基于标签-画师 NPMI 共现数据，根据您当前已选的标签，推荐擅长这些元素的画师。<br>悬停画师行可查看与该画师共现关联最强的标签。').style(
                                     'font-size:14px;line-height:1.5;')
 
-                self.artist_rec_list = ui.column().classes('w-full gap-0 nicegui-scroll').style('max-height: 420px; overflow-y: auto;')
+                self.artist_rec_list = ui.column().classes('w-full gap-0')
                 with self.artist_rec_list:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
@@ -1407,6 +1591,8 @@ class DanbooruSearchUI:
             self.current_segments = list(response.segments) if response.segments else []
 
             self.results_section.set_visibility(True)
+            self.sel_kw_section.set_visibility(True)
+            self.empty_state.set_visibility(False)
 
             _saved_rpp = self._get_rows_per_page()
             self.result_table.rows = apply_nsfw_filter(table_data, show_nsfw_val)
