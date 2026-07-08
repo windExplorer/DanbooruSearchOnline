@@ -158,6 +158,21 @@ HF_ENDPOINT=https://hf-mirror.com     # 国内加速模型下载（可选）
 | `DISABLE_NSFW` | 设为 `1` 强制禁用 NSFW 显示 | `0` |
 | `OSS_*` | 阿里云 OSS 计数器后端（4 项：ACCESS_KEY_ID / SECRET / ENDPOINT / BUCKET_NAME）。**未配置则自动退化为本地模式**，不影响搜索 | 无 |
 
+### 获取 bge-m3 模型
+
+本工具依赖 [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) 语义向量模型，权重不随仓库分发，需自行获取。完整下载方式（HuggingFace / ModelScope 魔搭、国内镜像、git 与 CLI 两种途径）见 [`model/README.md`](./model/README.md)。速览：
+
+- **HuggingFace（官方）**：https://huggingface.co/BAAI/bge-m3
+  ```powershell
+  uv run huggingface-cli download BAAI/bge-m3 --local-dir model/bge-m3
+  ```
+- **ModelScope 魔搭（国内推荐）**：https://modelscope.cn/models/BAAI/bge-m3
+  ```powershell
+  pip install modelscope
+  modelscope download --model BAAI/bge-m3 --local_dir model/bge-m3
+  ```
+- **国内加速（HF 源）**：设置 `HF_ENDPOINT=https://hf-mirror.com` 后再执行上面的 `huggingface-cli` 命令（也可写进 `.env`）。
+
 ### 模型路径（可配置）
 
 模型加载优先级（由 `platform_utils.resolve_model_path()` 决定）：
@@ -167,7 +182,7 @@ HF_ENDPOINT=https://hf-mirror.com     # 国内加速模型下载（可选）
 3. **项目内 `model/bge-m3/`**（默认：模型已放在此处，无需任何额外配置）
 4. 以上都没有时，自动从 HuggingFace Hub 下载 `BAAI/bge-m3` 并缓存（国内可配 `HF_ENDPOINT` 镜像加速）
 
-**推荐做法**：将 `BAAI/bge-m3` 整体放到本项目的 `model/bge-m3/` 目录（放置规范见 `model/README.md`），引擎默认就会直接使用它，彻底摆脱对外部固定路径的依赖。如需指向别处，用环境变量指定即可：
+**推荐做法**：将 `BAAI/bge-m3` 整体放到本项目的 `model/bge-m3/` 目录（放置规范与下载方式见 [`model/README.md`](./model/README.md)），引擎默认就会直接使用它，彻底摆脱对外部固定路径的依赖。如需指向别处，用环境变量指定即可：
 
 ```powershell
 $env:DANBOORU_MODEL_PATH = "D:/path/to/your/bge-m3"
