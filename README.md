@@ -46,8 +46,11 @@ tags:
 - **移除 `sync_to_hf` GitHub Actions**：删除原作者用于将代码同步到其 HuggingFace / ModelScope 空间的自动化工作流（含原作者专属仓库 ID 与密钥配置），本仓库不再自动同步到任何第三方平台。
 - **许可证标注修正**：`README` frontmatter 的 `license` 由原作者误标的 `mit` 修正为 `gpl-3.0`，与仓库根目录 `LICENSE` 文件保持一致。
 - **移除原作者个人资料**：删除原 README 中的微信赞赏码（收款码）、基于原作者私有服务器的搜索统计等个人相关板块。
+- **维护更新记录 `CHANGELOG.md`**：本仓库每次发布（含 Docker 化、镜像瘦身、版本号修正等）均在 [CHANGELOG.md](./CHANGELOG.md) 记录改动明细与版本号，便于追溯。
 
 > 📦 **本地部署 / 自托管 / 开发**：依赖安装、运行方式、可选 GPU、首次编码、环境变量与生产部署，请见 [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)；Docker 自托管部署见 [docs/DOCKER.md](./docs/DOCKER.md)。
+>
+> 📝 **版本更新记录**：每次发布的改动明细与版本号见 [CHANGELOG.md](./CHANGELOG.md)（含 Docker 化、镜像瘦身、版本号修正等）。
 
 ![](https://akizukipic.oss-cn-beijing.aliyuncs.com/img/202604022117025.png)
 
