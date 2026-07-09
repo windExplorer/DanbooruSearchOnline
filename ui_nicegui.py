@@ -194,14 +194,26 @@ def _get_git_commit() -> str:
 
 
 def _get_version() -> str:
-    """读取真实数字版本号（优先已安装包元数据，回退解析 pyproject.toml）。"""
+    """读取真实数字版本号。优先 CHANGELOG.md 顶部最新版本，回退包元数据 / pyproject.toml。"""
+    # 1) CHANGELOG.md 顶部最新版本（首个 ## [x.y.z] 条目）
+    try:
+        _base = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(_base, 'CHANGELOG.md'), encoding='utf-8') as _f:
+            for _line in _f:
+                _m = re.match(r'^##\s+\[v?(\d+\.\d+\.\d+)\]', _line)
+                if _m:
+                    return _m.group(1)
+    except Exception:
+        pass
+    # 2) 已安装包元数据
     try:
         from importlib.metadata import version as _pkg_version
         return _pkg_version('danbooru-search-online')
     except Exception:
         pass
+    # 3) pyproject.toml 的 project.version
     try:
-        _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _base = os.path.dirname(os.path.abspath(__file__))
         with open(os.path.join(_base, 'pyproject.toml'), encoding='utf-8') as _f:
             _txt = _f.read()
         _m = re.search(r'^version\s*=\s*["\']([^"\']+)["\']', _txt, re.MULTILINE)
