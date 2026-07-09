@@ -651,7 +651,10 @@ class DanbooruSearchUI:
                     min-height: 0 !important; max-height: 100% !important; overflow: hidden !important;
                 }
                 /* 各结果区域独立滚动容器：匹配标签结果 / 同类标签 / 推荐画师 / 关联推荐 */
-                .region-scroll { flex: 1 1 0 !important; min-height: 0 !important; overflow-y: auto !important; }
+                /* 负 margin-right 抵消卡片 p-4，使滚动条贴卡片右侧；padding-right 让列表与滚动条留间距 */
+                .region-scroll { flex: 1 1 0 !important; min-height: 0 !important; overflow-y: auto !important;
+                                 margin-right: -16px !important; padding-right: 16px !important;
+                                 scrollbar-gutter: stable !important; }
                 .region-grow2 { flex-grow: 2 !important; }
                 @media (max-width: 1100px) {
                     .two-col-layout { flex-wrap: wrap !important; height: auto !important; }
