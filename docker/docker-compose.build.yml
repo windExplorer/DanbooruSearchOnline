@@ -1,0 +1,37 @@
+# 自编译部署：从源码构建镜像并启动。
+# 用法（在仓库根目录）：
+#   docker compose -f docker/docker-compose.build.yml up -d --build
+#
+# 构建也可改用一键脚本 scripts/build-docker.sh（或 .ps1），再执行本文件（去掉 --build）。
+
+services:
+  danbooru-search:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: danbooru-search-online:latest
+    container_name: danbooru-search
+    ports:
+      - "7860:7860"
+    environment:
+      # 容器内绑定地址与端口（与 Dockerfile 默认值一致，显式写出便于修改）
+      - DANBOORU_HOST=0.0.0.0
+      - DANBOORU_PORT=7860
+      # 国内加速 HuggingFace 模型下载；海外用户可改为官方（留空）
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      # 推理设备：auto（有 GPU 用 GPU，否则 CPU）/ cpu / cuda
+      - DANBOORU_DEVICE=${DANBOORU_DEVICE:-auto}
+    # 可选：本地 .env（含 DANBOORU_MODEL_PATH 等）注入容器；缺失不报错
+    env_file:
+      - path: ../.env
+        required: false
+    volumes:
+      # 模型权重：首次自动下载后持久化，避免每次重建镜像重新下载
+      - model_cache:/app/model
+      # 标签库向量编码缓存：首次全量编码后持久化，之后秒级启动
+      - embedding_cache:/app/tags_embedding
+    restart: unless-stopped
+
+volumes:
+  model_cache:
+  embedding_cache:

@@ -1,0 +1,32 @@
+# 已有镜像部署：直接使用已构建 / 已拉取的镜像启动（不自编译）。
+# 用法（在仓库根目录）：
+#   docker compose -f docker/docker-compose.pull.yml up -d
+#
+# 镜像来源二选一：
+#   1) 本地已用 scripts/build-docker.sh 构建的 danbooru-search-online:latest（默认值）
+#   2) 推送到镜像仓库后的地址，例如：
+#        export DANBOORU_IMAGE=registry.example.com/your-name/danbooru-search-online:latest
+#     或修改下方 image 字段，再执行上面的命令。
+
+services:
+  danbooru-search:
+    image: ${DANBOORU_IMAGE:-danbooru-search-online:latest}
+    container_name: danbooru-search
+    ports:
+      - "7860:7860"
+    environment:
+      - DANBOORU_HOST=0.0.0.0
+      - DANBOORU_PORT=7860
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - DANBOORU_DEVICE=${DANBOORU_DEVICE:-auto}
+    env_file:
+      - path: ../.env
+        required: false
+    volumes:
+      - model_cache:/app/model
+      - embedding_cache:/app/tags_embedding
+    restart: unless-stopped
+
+volumes:
+  model_cache:
+  embedding_cache:

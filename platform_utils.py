@@ -106,11 +106,22 @@ def is_cloud() -> bool:
 def get_host_port() -> tuple[str, int]:
     """
     返回 NiceGUI 应使用的 (host, port)。
-    HF 和魔搭创空间都使用 0.0.0.0:7860；本地使用 127.0.0.1:1111。
+
+    - HF / 魔搭创空间：0.0.0.0:7860
+    - 本地默认：127.0.0.1:11111
+    - 可通过环境变量覆盖（Docker / 反向代理等场景）：
+        DANBOORU_HOST  （默认 127.0.0.1）
+        DANBOORU_PORT  （默认 11111）
+      例如 Docker 部署设置 DANBOORU_HOST=0.0.0.0、DANBOORU_PORT=7860 以对外暴露。
     """
     if is_cloud():
         return '0.0.0.0', 7860
-    return '127.0.0.1', 11111
+    host = os.environ.get('DANBOORU_HOST', '127.0.0.1')
+    try:
+        port = int(os.environ.get('DANBOORU_PORT', '11111'))
+    except ValueError:
+        port = 11111
+    return host, port
 
 
 def nsfw_allowed() -> bool:

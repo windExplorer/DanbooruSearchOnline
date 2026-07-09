@@ -6,6 +6,22 @@
 
 ---
 
+## [v1.1.7] - 2026-07-09
+
+Docker 化：一键构建、compose 自编译 / 已有镜像部署、文档归整。
+
+### 新增
+- `docker/Dockerfile`（增强版）：非 root 运行、默认 `DANBOORU_HOST=0.0.0.0`/`DANBOORU_PORT=7860`、依赖层缓存；镜像仅含代码与依赖，模型权重与编码缓存在首次运行时下载/生成并经 named volume 持久化。
+- `docker/docker-compose.build.yml`：自编译（源码构建）部署；`docker/docker-compose.pull.yml`：已有镜像部署。
+- `scripts/build-docker.sh` 与 `scripts/build-docker.ps1`：一键构建最新镜像，**自动读取 `VERSION` 文件（回退解析 `CHANGELOG.md` 顶部版本号）作为镜像标签，并同时打 `latest` 标签**。
+- `VERSION` 文件：记录当前版本号，供构建脚本自动获取，避免手填版本。
+- `docs/DOCKER.md`：Docker 部署操作指南（构建、自编译 / 镜像部署、环境变量、数据持久化、故障排查）。
+- 文档归整：`DEPLOYMENT.md`、`API.md` 迁移至 `docs/`，修正内部相对链接；`.gitignore` 放行 `docs/` 与 `scripts/*.sh`。
+- `platform_utils.get_host_port()` 支持 `DANBOORU_HOST`/`DANBOORU_PORT` 环境变量覆盖，Docker / 反代场景可对外暴露。
+
+### 变更
+- 删除根目录旧 `Dockerfile`，统一使用 `docker/Dockerfile`（`docker-compose.build.yml` 的 `dockerfile` 路径同步修正为 `docker/Dockerfile`）。
+
 ## [v1.1.6] - 2026-07-09
 
 修复放大弹窗：内容宽度未占满、同类标签缺复选框。

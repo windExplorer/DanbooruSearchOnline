@@ -8,6 +8,7 @@ tags_embedding/
 .idea/
 *ignore*.py
 *.sh
+!scripts/*.sh
 tempsave/
 *.env
 *.png
@@ -17,7 +18,7 @@ legacy_history.json
 CLAUDE.md
 *.zip
 .claude/
-docs/
+!docs/  # 部署与接口文档现纳入版本管理
 .*/
 /AGENTS.md
 tests/

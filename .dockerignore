@@ -1,0 +1,28 @@
+# ── 版本控制 / 本地环境 ──
+.git
+.gitignore
+*.md
+.env
+.env.example
+CLAUDE.md
+AGENTS.md
+legacy_history.json
+
+# ── Python 缓存与虚拟环境 ──
+__pycache__
+*.pyc
+.venv
+uv.lock
+tests/
+eval/
+tempsave/
+
+# ── 大型二进制（不进镜像，运行时下载 / 生成）──
+# 模型权重：数 GB，运行时由引擎自动从 HuggingFace / ModelScope 下载并缓存
+model/bge-m3
+# 全量编码缓存：首次启动生成，挂载 volume 持久化
+tags_embedding/
+
+# ── 不需要进镜像的目录 ──
+docs/
+scripts/
