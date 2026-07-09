@@ -1277,13 +1277,13 @@ class DanbooruSearchUI:
             # ── 左栏：语义匹配结果（表格）──
             with ui.card().classes('col-left dt-card p-4 nicegui-scroll'):
                 with ui.row().classes('items-center justify-between mb-2 w-full'):
-                with ui.row().classes('items-center gap-2'):
-                    ui.icon('table_chart', color='primary')
-                    ui.label('匹配标签结果').classes('font-bold text-lg text-gray-800')
-                    ui.button(icon='open_in_full', on_click=lambda: self._open_expand_dialog('table')) \
-                        .props('dense flat round color=grey-7').classes('text-sm ml-1')
-                ui.button('复制全部标签', icon='content_copy', on_click=self._copy_all_tags) \
-                    .props('dense flat color=primary').classes('text-sm')
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('table_chart', color='primary')
+                        ui.label('匹配标签结果').classes('font-bold text-lg text-gray-800')
+                        ui.button(icon='open_in_full', on_click=lambda: self._open_expand_dialog('table')) \
+                            .props('dense flat round color=grey-7').classes('text-sm ml-1')
+                    ui.button('复制全部标签', icon='content_copy', on_click=self._copy_all_tags) \
+                        .props('dense flat color=primary').classes('text-sm')
 
                 with ui.element('div').classes('region-scroll nicegui-scroll region-grow2'):
                     self.result_table = ui.table(
@@ -1915,63 +1915,6 @@ class DanbooruSearchUI:
 
     # ── 放大弹窗：全量查看单个结果区域 ──────────────────────────────────
 
-    def _render_group_readonly(self, target):
-        """放大弹窗：只读展示全部同类标签（展开所有分组、显示全部标签，不含分页/复选框）。"""
-        group_data = getattr(self, '_current_group_data', [])
-        if not group_data:
-            with target:
-                ui.label('已选标签无分组信息').classes('text-sm text-gray-400 italic p-2')
-            return
-        CAT_BG = {
-            'General':   'background-color: rgba(59,130,246,0.06);',
-            'Character': 'background-color: rgba(34,197,94,0.06);',
-            'Copyright': 'background-color: rgba(168,85,247,0.06);',
-        }
-        CAT_LABEL = {'General': '通用', 'Character': '角色', 'Copyright': '作品'}
-        with target:
-            for group_info in group_data:
-                group_name = group_info['group']
-                group_cn = group_info.get('group_cn_name', group_name.replace('tag_group:', ''))
-                tags = group_info['tags']
-                with ui.expansion(
-                    f'{group_cn} ({len(tags)} 个标签)',
-                    icon='label',
-                    value=True,
-                ).classes('w-full').props('dense'):
-                    with ui.element('div').classes('w-full grid grid-cols-2 gap-1 p-1'):
-                        for t in tags:
-                            tag = t['tag']
-                            cn_first = t['cn_name'].split(',')[0].strip() if t['cn_name'] else ''
-                            cn_full = t.get('cn_name', '')
-                            cat = t['category']
-                            wiki_text = str(t.get('wiki', ''))
-                            row_bg = CAT_BG.get(cat, '')
-                            cat_label = CAT_LABEL.get(cat, '')
-                            tooltip_html = ''
-                            if wiki_text:
-                                prefix = f'<span style="opacity:0.7;margin-right:4px;">[{cat_label}]</span>' if cat_label else ''
-                                tooltip_html += f'<div style="margin-bottom:6px;">{prefix}{wiki_text}</div>'
-                            if cn_full:
-                                tooltip_html += f'<div style="opacity:0.85;">{cn_full}</div>'
-                            with ui.row().classes(
-                                'w-full items-center gap-1.5 px-2 py-1.5 rounded related-item'
-                            ).style(row_bg):
-                                if tooltip_html:
-                                    with ui.tooltip().props('content-class="bg-black text-white shadow-4" max-width="500px"'):
-                                        ui.html(tooltip_html).style('font-size:14px;line-height:1.5;max-width:480px;')
-                                with ui.column().classes('flex-grow gap-0 min-w-0 overflow-hidden'):
-                                    ui.link(
-                                        tag,
-                                        f'https://danbooru.donmai.us/wiki_pages/{tag}',
-                                        new_tab=True,
-                                    ).classes('tag-link text-primary font-bold text-xs truncate')
-                                    if cn_first:
-                                        ui.label(cn_first).classes('text-xs text-gray-500 truncate')
-                                count = t.get('post_count', 0)
-                                if count and count > 0:
-                                    count_str = f'{count/1000:.0f}k' if count >= 10000 else (f'{count/1000:.1f}k' if count >= 1000 else str(count))
-                                    ui.label(count_str).classes('text-sm font-bold text-grey-600 whitespace-nowrap')
-
     def _open_expand_dialog(self, kind: str):
         """点击区域放大按钮：在弹窗中以全量、可滚动的方式查看该区域内容。"""
         if kind == 'table':
@@ -1998,11 +1941,11 @@ class DanbooruSearchUI:
         else:
             return
 
-        with ui.dialog() as dialog, ui.card().classes('w-[92vw] max-w-[1200px] h-[88vh] flex flex-col overflow-hidden'):
+        with ui.dialog() as dialog, ui.card().classes('flex flex-col overflow-hidden').style('width:92vw;max-width:1200px;height:88vh;'):
             with ui.row().classes('items-center justify-between w-full px-4 py-3 border-b border-gray-200 shrink-0'):
                 ui.label(title).classes('font-bold text-lg text-gray-800')
                 ui.button(icon='close', on_click=dialog.close).props('flat round dense')
-            content = ui.element('div').classes('flex-1 min-h-0 overflow-auto p-4 nicegui-scroll')
+            content = ui.element('div').classes('flex-1 min-h-0 overflow-auto p-4 nicegui-scroll w-full')
 
             if kind == 'table':
                 with content:
@@ -2017,7 +1960,13 @@ class DanbooruSearchUI:
                     if body_slot:
                         t.add_slot('body', body_slot)
             elif kind == 'group':
-                self._render_group_readonly(content)
+                self._render_group_expansion(
+                    getattr(self, '_current_group_data', []),
+                    [],
+                    self.input_nsfw.value,
+                    target=content,
+                    register=False,
+                )
             elif kind == 'artist':
                 self._render_artist_rec(
                     getattr(self, '_current_artist_results', []),
@@ -2184,22 +2133,30 @@ class DanbooruSearchUI:
                     score_color = 'green' if normalized > 0.6 else ('teal' if normalized > 0.3 else 'grey')
                     ui.label(score_pct).classes(f'text-sm font-bold text-{score_color}-600 whitespace-nowrap')
 
-    def _render_group_expansion(self, group_data: list, selected_tags: list[str], show_nsfw: bool):
-        """渲染 Group 同类扩展区域。"""
-        if self.group_expansion_container is None:
+    def _render_group_expansion(self, group_data: list, selected_tags: list[str], show_nsfw: bool, target=None, register=True):
+        """渲染 Group 同类扩展区域。
+
+        target/register 用于弹窗复用：渲染到指定容器、且不污染主面板的分页/滚动/复选框状态字典。
+        弹窗模式下展示全部标签（visible_limit=None）、保留可用复选框，但不注册到 self._group_checkboxes、
+        不触发主页面滚动位置恢复。
+        """
+        if self.group_expansion_container is None and target is None:
             return
+        container = target if target is not None else self.group_expansion_container
         self._current_group_data = group_data
-        self.group_expansion_container.clear()
-        self._group_checkboxes.clear()
-        group_key = _group_names_key(group_data)
-        if group_key != self._group_render_key:
-            self._group_render_key = group_key
-            self._group_render_limits.clear()
-            self._group_expanded_names.clear()
-            self._group_scroll_positions.clear()
+        if register:
+            self.group_expansion_container.clear()
+            self._group_checkboxes.clear()
+            group_key = _group_names_key(group_data)
+            if group_key != self._group_render_key:
+                self._group_render_key = group_key
+                self._group_render_limits.clear()
+                self._group_expanded_names.clear()
+                self._group_scroll_positions.clear()
+        container.clear()
 
         if not group_data:
-            with self.group_expansion_container:
+            with container:
                 ui.label('已选标签无分组信息').classes('text-sm text-gray-400 italic p-2')
             return
 
@@ -2213,12 +2170,12 @@ class DanbooruSearchUI:
 
         selected_now = set(self._get_selected_tags())
 
-        with self.group_expansion_container:
+        with container:
             for group_info in group_data:
                 group_name = group_info['group']
                 group_cn = group_info.get('group_cn_name', group_name.replace('tag_group:', ''))
                 tags = group_info['tags']
-                visible_limit = self._group_render_limits.get(group_name, GROUP_RENDER_TAG_LIMIT)
+                visible_limit = None if not register else self._group_render_limits.get(group_name, GROUP_RENDER_TAG_LIMIT)
                 visible_tags, hidden_count = _limit_group_render_tags(tags, visible_limit)
                 scroll_id = _group_scroll_dom_id(group_name)
 
@@ -2264,7 +2221,8 @@ class DanbooruSearchUI:
                                     '', value=is_selected,
                                     on_change=lambda e, t=tag: self._on_group_checkbox_change(t, e.value),
                                 ).props('dense')
-                                self._group_checkboxes[tag] = cb
+                                if register:
+                                    self._group_checkboxes[tag] = cb
 
                                 # 标签名 + 中文名（与关联推荐对齐方式一致）
                                 with ui.column().classes('flex-grow gap-0 min-w-0 overflow-hidden'):
@@ -2286,7 +2244,7 @@ class DanbooruSearchUI:
                                     else:
                                         count_str = str(count)
                                     ui.label(count_str).classes('text-sm font-bold text-grey-600 whitespace-nowrap')
-                        if hidden_count > 0:
+                        if hidden_count > 0 and register:
                             async def _load_more(
                                 g=group_name,
                                 total=len(tags),
@@ -2301,7 +2259,8 @@ class DanbooruSearchUI:
                                 icon='expand_more',
                                 on_click=_load_more,
                             ).props('dense flat color=primary').classes('col-span-2 text-xs')
-        self._restore_group_scroll_positions()
+        if register:
+            self._restore_group_scroll_positions()
 
     def _on_group_expansion_change(self, group_name: str, event):
         value = getattr(event, 'args', None)
