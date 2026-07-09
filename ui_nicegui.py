@@ -193,6 +193,25 @@ def _get_git_commit() -> str:
         return os.environ.get('COMMIT_SHA', 'unknown')[:7]
 
 
+def _get_version() -> str:
+    """读取真实数字版本号（优先已安装包元数据，回退解析 pyproject.toml）。"""
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version('danbooru-search-online')
+    except Exception:
+        pass
+    try:
+        _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(_base, 'pyproject.toml'), encoding='utf-8') as _f:
+            _txt = _f.read()
+        _m = re.search(r'^version\s*=\s*["\']([^"\']+)["\']', _txt, re.MULTILINE)
+        if _m:
+            return _m.group(1)
+    except Exception:
+        pass
+    return os.environ.get('APP_VERSION', '0.0.0')
+
+
 def result_to_row(r, nsfw_visible: bool) -> dict:
     d = asdict(r)
     d['_nsfw_blocked'] = (r.nsfw == '1') and not nsfw_visible
@@ -317,12 +336,11 @@ class DanbooruSearchUI:
             try:
                 total = counter.get()
                 visits = counter.get_visits()
-                commit = _get_git_commit()
+                ver = _get_version()
                 self.search_count_label.content = (
                     f'累计搜索 {total:,} 次 | 累计访问 {visits:,} 次 | '
-                    f'<span class="font-mono text-gray-300">版本号: {commit}</span>'
-                    f'<br>'
-                    f'<a href="/api/docs" '
+                    f'版本号: {ver}'
+                    f' | <a href="/api/docs" '
                     f'target="_blank" rel="noopener noreferrer" '
                     f'class="text-blue-400 hover:text-blue-600 hover:underline">使用 API 服务</a>'
                     f' | <a href="https://github.com/windExplorer/DanbooruSearchOnline" '
@@ -550,14 +568,18 @@ class DanbooruSearchUI:
                     border-radius: 12px !important;
                     background: #f8fafc !important;
                     border: 1.5px solid #e2e8f0 !important;
-                    min-height: 96px !important;
+                    height: 180px !important;
+                    max-height: 180px !important;
                     padding: 4px 6px !important;
+                    overflow: hidden !important;
                     transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
                 }
                 .search-textarea .q-field__native {
                     font-size: 1rem !important; line-height: 1.65 !important;
                     padding: 10px 12px !important; color: #1f2937 !important;
                     resize: none !important;
+                    height: 100% !important;
+                    overflow-y: auto !important;
                 }
                 .search-textarea .q-field__native::placeholder { color: #94a3b8 !important; font-size: 1rem !important; }
                 .search-textarea.q-field--focused .q-field__control {
@@ -744,8 +766,8 @@ class DanbooruSearchUI:
                     self._build_group_notice()
                     self._build_mcp_guide()
 
-            # ── 整页底部居中：累计搜索 / 访问统计 ──
-            with ui.element('div').classes('w-full max-w-[1500px] mx-auto text-center py-6 mt-2'):
+            # ── 整页底部居中：累计搜索 / 访问统计（单行，紧贴上方容器，底部留 20px）──
+            with ui.element('div').classes('w-full max-w-[1500px] mx-auto text-center pt-0 mt-0 pb-5'):
                 self.search_count_label = ui.html('正在加载数据...').classes('text-sm text-gray-400')
                 self._update_footer_text()
 
@@ -846,7 +868,7 @@ class DanbooruSearchUI:
             # ── 搜索输入 ──
             self.search_input = ui.textarea(
                 placeholder='描述你想找的画面，例如：白裙少女在雨中奔跑…'
-            ).classes('search-textarea').props('outlined autogrow rows=3 aria-label="搜索描述"')
+            ).classes('search-textarea').props('outlined rows=6 aria-label="搜索描述"')
             self.search_input.on('keydown.ctrl.enter', self.perform_search)
 
             # ── 搜索按钮 ──
@@ -859,9 +881,9 @@ class DanbooruSearchUI:
 
             ui.label('Ctrl + Enter 快捷搜索').classes('text-xs text-gray-400 mt-2 text-center w-full')
 
-            # ── 搜索选项（可折叠，默认折叠）──
+            # ── 搜索选项（可折叠，默认展开）──
             ui.separator().classes('my-4')
-            with ui.expansion('搜索选项', icon='settings').classes('w-full'):
+            with ui.expansion('搜索选项', icon='settings', value=True).classes('w-full'):
                 self.search_params_row = ui.column().classes('w-full gap-3')
                 with self.search_params_row:
                     # 搜索模式

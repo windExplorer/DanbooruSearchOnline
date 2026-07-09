@@ -20,6 +20,18 @@
 
 ---
 
+## [v1.1.2] - 2026-07-09
+
+UI 微调：搜索体验与底部栏精简。
+
+### 变更
+- 搜索选项默认展开（`ui.expansion(value=True)`）。
+- 搜索框固定高度 180px，超出内容改为内部滚动（`min-height` 改为 `height/max-height: 180px`，`q-field__native` 加 `overflow-y: auto`），移除 `autogrow`，避免无限增高。
+- 底部统计栏改为单行，去掉上边距（与上方容器已有 20px 间距）、下边距统一为 20px（`pt-0 mt-0 pb-5`），并移除换行 `<br>` 让链接与统计同处一行。
+- 底部「版本号」改用真实数字版本号（取自 `pyproject.toml` 的 `project.version`，即 `0.1.0`），新增 `_get_version()` 读取已安装包元数据 / 解析 pyproject 的回退逻辑，替换原先的 git commit 短哈希。
+
+---
+
 ## [v1.1.0] - 2026-07-09
 
 界面整体重写（保留全部检索能力与交互逻辑，仅重构前端外壳与样式）。
