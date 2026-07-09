@@ -34,7 +34,7 @@ tags:
 
 ## 本仓库相对原项目的改动
 
-本仓库在保留原项目全部检索能力的基础上，做了以下本地化 / 工程化改造（详见各文件改动与 [部署文档](https://github.com/windExplorer/DanbooruSearchOnline/blob/main/docs/DEPLOYMENT.md)）：
+本仓库在保留原项目全部检索能力的基础上，做了以下本地化 / 工程化改造（详见各文件改动与 [部署文档](./docs/DEPLOYMENT.md)）：
 
 - **模型路径可配置化**：引擎默认从项目内 `model/bge-m3/` 加载 `BAAI/bge-m3` 模型，不再依赖原项目在代码/文档中写死的外部固定路径（如 `D:/LLMs/BAAI/bge-m3`）。可通过 `DANBOORU_MODEL_PATH` 环境变量或 `.env` 指向任意位置；都不设置时自动从 HuggingFace Hub 下载。
 - **集中配置 `.env`**：引入标准 `.env`（及 `.env.example` 模板）作为本地配置入口，替代原项目非标准的 `config.env` 命名，启动时自动加载，无需手动 `export`。
@@ -46,11 +46,11 @@ tags:
 - **移除 `sync_to_hf` GitHub Actions**：删除原作者用于将代码同步到其 HuggingFace / ModelScope 空间的自动化工作流（含原作者专属仓库 ID 与密钥配置），本仓库不再自动同步到任何第三方平台。
 - **许可证标注修正**：`README` frontmatter 的 `license` 由原作者误标的 `mit` 修正为 `gpl-3.0`，与仓库根目录 `LICENSE` 文件保持一致。
 - **移除原作者个人资料**：删除原 README 中的微信赞赏码（收款码）、基于原作者私有服务器的搜索统计等个人相关板块。
-- **维护更新记录 `CHANGELOG.md`**：本仓库每次发布（含 Docker 化、镜像瘦身、版本号修正等）均在 [CHANGELOG.md](https://github.com/windExplorer/DanbooruSearchOnline/blob/main/CHANGELOG.md) 记录改动明细与版本号，便于追溯。
+- **维护更新记录 `CHANGELOG.md`**：本仓库每次发布（含 Docker 化、镜像瘦身、版本号修正等）均在 [CHANGELOG.md](./CHANGELOG.md) 记录改动明细与版本号，便于追溯。
 
-> 📦 **本地部署 / 自托管 / 开发**：依赖安装、运行方式、可选 GPU、首次编码、环境变量与生产部署，请见 [docs/DEPLOYMENT.md](https://github.com/windExplorer/DanbooruSearchOnline/blob/main/docs/DEPLOYMENT.md)；Docker 自托管部署见 [docs/DOCKER.md](https://github.com/windExplorer/DanbooruSearchOnline/blob/main/docs/DOCKER.md)。
+> 📦 **本地部署 / 自托管 / 开发**：依赖安装、运行方式、可选 GPU、首次编码、环境变量与生产部署，请见 [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)；Docker 自托管部署见 [docs/DOCKER.md](./docs/DOCKER.md)。
 >
-> 📝 **版本更新记录**：每次发布的改动明细与版本号见 [CHANGELOG.md](https://github.com/windExplorer/DanbooruSearchOnline/blob/main/CHANGELOG.md)（含 Docker 化、镜像瘦身、版本号修正等）。
+> 📝 **版本更新记录**：每次发布的改动明细与版本号见 [CHANGELOG.md](./CHANGELOG.md)（含 Docker 化、镜像瘦身、版本号修正等）。
 
 ![](https://akizukipic.oss-cn-beijing.aliyuncs.com/img/202604022117025.png)
 
