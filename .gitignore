@@ -33,3 +33,8 @@ model/bge-m3/
 # 预下载的 pip wheel（构建加速用，不入库；docker/wheels/.gitkeep 占位保留）
 docker/wheels/*.whl
 docker/wheels-cpu/*.whl
+
+# 构建脚本导出的镜像归档（danbooru-search-online-cpu-<version>.tar 等），体积大且不入库
+*.tar
+*.tar.gz
+*.tgz
