@@ -6,6 +6,15 @@
 
 ---
 
+## [v1.1.5] - 2026-07-09
+
+结果区域新增「放大查看」按钮，弹窗全量浏览。
+
+### 变更
+- 四个结果区域标题处各加一个放大按钮（`open_in_full` 图标），点击打开大尺寸弹窗（约 92vw / 88vh，内部可滚动），便于一目了然查看全量内容。
+- 新增 `_open_expand_dialog(kind)`，按类型渲染：`table` 复用主表格的 `body` 行模板只读展示全部行；`group` 调用新增的 `_render_group_readonly` 只读展开所有分组、显示全部标签（不含分页/复选框）；`artist` / `related` 复用 `_render_artist_rec` / `_render_related_list`，新增 `target` 与 `register` 参数以支持渲染到弹窗容器、且不污染主面板的复选框状态字典。
+- 为弹窗提供数据快照：`__init__` 增加 `_current_artist_results` / `_current_artist_top_tags` / `_current_group_data` / `_table_body_slot`，分别由对应渲染函数写入，供弹窗读取最新结果。
+
 ## [v1.1.4] - 2026-07-09
 
 滚动条样式微调：与列表留间距、贴卡片右侧。

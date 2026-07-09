@@ -289,6 +289,11 @@ class DanbooruSearchUI:
         self.selected_chips_container = None  # 已选标签 chip 容器
         self.current_related: list = []
         self.chip_extra_selected: set = set()
+        # 放大弹窗所需的数据快照
+        self._current_artist_results: list = []
+        self._current_artist_top_tags: dict = {}
+        self._current_group_data: list = []
+        self._table_body_slot: str = ''
         # 去抖任务句柄（取消旧任务避免 CPU 洪峰）
         self._debounce_related_task = None  # type: asyncio.Task | None
         self._debounce_group_task = None    # type: asyncio.Task | None
@@ -1272,11 +1277,13 @@ class DanbooruSearchUI:
             # ── 左栏：语义匹配结果（表格）──
             with ui.card().classes('col-left dt-card p-4 nicegui-scroll'):
                 with ui.row().classes('items-center justify-between mb-2 w-full'):
-                    with ui.row().classes('items-center gap-2'):
-                        ui.icon('table_chart', color='primary')
-                        ui.label('匹配标签结果').classes('font-bold text-lg text-gray-800')
-                    ui.button('复制全部标签', icon='content_copy', on_click=self._copy_all_tags) \
-                        .props('dense flat color=primary').classes('text-sm')
+                with ui.row().classes('items-center gap-2'):
+                    ui.icon('table_chart', color='primary')
+                    ui.label('匹配标签结果').classes('font-bold text-lg text-gray-800')
+                    ui.button(icon='open_in_full', on_click=lambda: self._open_expand_dialog('table')) \
+                        .props('dense flat round color=grey-7').classes('text-sm ml-1')
+                ui.button('复制全部标签', icon='content_copy', on_click=self._copy_all_tags) \
+                    .props('dense flat color=primary').classes('text-sm')
 
                 with ui.element('div').classes('region-scroll nicegui-scroll region-grow2'):
                     self.result_table = ui.table(
@@ -1292,7 +1299,7 @@ class DanbooruSearchUI:
                 self.result_table.on('pagination', lambda _: self._save_config())
 
                 # 自定义行模板：行背景色按分类，整行悬浮显示 wiki（NSFW模糊行除外）
-                self.result_table.add_slot('body', r'''
+                _body_slot = r'''
                     <q-tr :props="props"
                           :class="props.row._nsfw_blocked ? 'nsfw-row-blocked' : ''"
                           :style="{
@@ -1370,7 +1377,10 @@ class DanbooruSearchUI:
                             </div>
                         </q-tooltip>
                     </q-tr>
-                ''')
+                '''
+
+                self.result_table.add_slot('body', _body_slot)
+                self._table_body_slot = _body_slot
 
                 # ── Group 同类扩展（左栏，表格下方）──
                 ui.separator().classes('my-2')
@@ -1383,6 +1393,8 @@ class DanbooruSearchUI:
                                 ui.label('基于标签分组数据，展示已选标签所属分组中的其他标签。勾选可加入已选。').style('font-size:14px;')
                     ui.button('根据已选刷新', icon='refresh', on_click=self._manual_refresh_group) \
                         .props('dense flat color=primary').classes('text-sm')
+                    ui.button(icon='open_in_full', on_click=lambda: self._open_expand_dialog('group')) \
+                        .props('dense flat round color=grey-7').classes('text-sm ml-1')
                 self.group_expansion_container = ui.column().classes('region-scroll nicegui-scroll w-full gap-0')
                 with self.group_expansion_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
@@ -1399,6 +1411,8 @@ class DanbooruSearchUI:
                                 ui.html(
                                     '基于标签-画师 NPMI 共现数据，根据您当前已选的标签，推荐擅长这些元素的画师。<br>悬停画师行可查看与该画师共现关联最强的标签。').style(
                                     'font-size:14px;line-height:1.5;')
+                    ui.button(icon='open_in_full', on_click=lambda: self._open_expand_dialog('artist')) \
+                        .props('dense flat round color=grey-7').classes('text-sm')
 
                 self.artist_rec_list = ui.column().classes('region-scroll nicegui-scroll w-full gap-0')
                 with self.artist_rec_list:
@@ -1420,6 +1434,8 @@ class DanbooruSearchUI:
                     # 新增手动刷新按钮
                     ui.button('根据已选刷新', icon='refresh', on_click=self._manual_refresh_related) \
                         .props('dense flat color=primary').classes('text-sm')
+                    ui.button(icon='open_in_full', on_click=lambda: self._open_expand_dialog('related')) \
+                        .props('dense flat round color=grey-7').classes('text-sm ml-1')
 
                 self.related_list_container = ui.column().classes('region-scroll nicegui-scroll w-full gap-0')
                 with self.related_list_container:
@@ -1429,19 +1445,21 @@ class DanbooruSearchUI:
     # 渲染关联推荐列表
     # ══════════════════════════════════════════════════════════════════════
 
-    def _render_related_list(self, related: list, show_nsfw: bool):
-        self.related_list_container.clear()
-        self._related_checkboxes.clear()
+    def _render_related_list(self, related: list, show_nsfw: bool, target=None, register=True):
+        container = target if target is not None else self.related_list_container
+        if register:
+            self._related_checkboxes.clear()
+        container.clear()
 
         filtered = [r for r in related if not (r.nsfw == '1' and not show_nsfw)]
         if not filtered:
-            with self.related_list_container:
+            with container:
                 ui.label('暂无推荐').classes('text-sm text-gray-400 italic p-4')
             return
 
         selected_now = set(self._get_selected_tags())
 
-        with self.related_list_container:
+        with container:
             for r in filtered:
                 tag = r.tag
                 cn_first = r.cn_name.split(',')[0].strip() if r.cn_name else ''
@@ -1497,7 +1515,8 @@ class DanbooruSearchUI:
                         '', value=is_selected,
                         on_change=lambda e, t=tag: self._on_related_checkbox_change(t, e.value)
                     ).props('dense')
-                    self._related_checkboxes[tag] = cb
+                    if register:
+                        self._related_checkboxes[tag] = cb
 
                     # 标签名（可点击跳转）+ 中文名
                     with ui.column().classes('flex-grow gap-0 min-w-0'):
@@ -1894,6 +1913,128 @@ class DanbooruSearchUI:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
             ui.notify('暂未选中标签', type='info', timeout=1500)
 
+    # ── 放大弹窗：全量查看单个结果区域 ──────────────────────────────────
+
+    def _render_group_readonly(self, target):
+        """放大弹窗：只读展示全部同类标签（展开所有分组、显示全部标签，不含分页/复选框）。"""
+        group_data = getattr(self, '_current_group_data', [])
+        if not group_data:
+            with target:
+                ui.label('已选标签无分组信息').classes('text-sm text-gray-400 italic p-2')
+            return
+        CAT_BG = {
+            'General':   'background-color: rgba(59,130,246,0.06);',
+            'Character': 'background-color: rgba(34,197,94,0.06);',
+            'Copyright': 'background-color: rgba(168,85,247,0.06);',
+        }
+        CAT_LABEL = {'General': '通用', 'Character': '角色', 'Copyright': '作品'}
+        with target:
+            for group_info in group_data:
+                group_name = group_info['group']
+                group_cn = group_info.get('group_cn_name', group_name.replace('tag_group:', ''))
+                tags = group_info['tags']
+                with ui.expansion(
+                    f'{group_cn} ({len(tags)} 个标签)',
+                    icon='label',
+                    value=True,
+                ).classes('w-full').props('dense'):
+                    with ui.element('div').classes('w-full grid grid-cols-2 gap-1 p-1'):
+                        for t in tags:
+                            tag = t['tag']
+                            cn_first = t['cn_name'].split(',')[0].strip() if t['cn_name'] else ''
+                            cn_full = t.get('cn_name', '')
+                            cat = t['category']
+                            wiki_text = str(t.get('wiki', ''))
+                            row_bg = CAT_BG.get(cat, '')
+                            cat_label = CAT_LABEL.get(cat, '')
+                            tooltip_html = ''
+                            if wiki_text:
+                                prefix = f'<span style="opacity:0.7;margin-right:4px;">[{cat_label}]</span>' if cat_label else ''
+                                tooltip_html += f'<div style="margin-bottom:6px;">{prefix}{wiki_text}</div>'
+                            if cn_full:
+                                tooltip_html += f'<div style="opacity:0.85;">{cn_full}</div>'
+                            with ui.row().classes(
+                                'w-full items-center gap-1.5 px-2 py-1.5 rounded related-item'
+                            ).style(row_bg):
+                                if tooltip_html:
+                                    with ui.tooltip().props('content-class="bg-black text-white shadow-4" max-width="500px"'):
+                                        ui.html(tooltip_html).style('font-size:14px;line-height:1.5;max-width:480px;')
+                                with ui.column().classes('flex-grow gap-0 min-w-0 overflow-hidden'):
+                                    ui.link(
+                                        tag,
+                                        f'https://danbooru.donmai.us/wiki_pages/{tag}',
+                                        new_tab=True,
+                                    ).classes('tag-link text-primary font-bold text-xs truncate')
+                                    if cn_first:
+                                        ui.label(cn_first).classes('text-xs text-gray-500 truncate')
+                                count = t.get('post_count', 0)
+                                if count and count > 0:
+                                    count_str = f'{count/1000:.0f}k' if count >= 10000 else (f'{count/1000:.1f}k' if count >= 1000 else str(count))
+                                    ui.label(count_str).classes('text-sm font-bold text-grey-600 whitespace-nowrap')
+
+    def _open_expand_dialog(self, kind: str):
+        """点击区域放大按钮：在弹窗中以全量、可滚动的方式查看该区域内容。"""
+        if kind == 'table':
+            rows = list(self.result_table.rows) if self.result_table else []
+            if not rows:
+                ui.notify('暂无匹配标签', type='info', timeout=1500)
+                return
+            title = '匹配标签结果（全部）'
+        elif kind == 'group':
+            if not getattr(self, '_current_group_data', []):
+                ui.notify('暂无同类标签', type='info', timeout=1500)
+                return
+            title = '同类标签（全部）'
+        elif kind == 'artist':
+            if not getattr(self, '_current_artist_results', []):
+                ui.notify('暂无推荐画师', type='info', timeout=1500)
+                return
+            title = '推荐擅长画师（全部）'
+        elif kind == 'related':
+            if not self.current_related:
+                ui.notify('暂无关联推荐', type='info', timeout=1500)
+                return
+            title = '关联推荐（全部）'
+        else:
+            return
+
+        with ui.dialog() as dialog, ui.card().classes('w-[92vw] max-w-[1200px] h-[88vh] flex flex-col overflow-hidden'):
+            with ui.row().classes('items-center justify-between w-full px-4 py-3 border-b border-gray-200 shrink-0'):
+                ui.label(title).classes('font-bold text-lg text-gray-800')
+                ui.button(icon='close', on_click=dialog.close).props('flat round dense')
+            content = ui.element('div').classes('flex-1 min-h-0 overflow-auto p-4 nicegui-scroll')
+
+            if kind == 'table':
+                with content:
+                    t = ui.table(
+                        columns=self.result_table.columns,
+                        rows=rows,
+                        row_key='tag',
+                        selection='multiple',
+                        pagination=0,
+                    ).classes('w-full')
+                    body_slot = getattr(self, '_table_body_slot', '')
+                    if body_slot:
+                        t.add_slot('body', body_slot)
+            elif kind == 'group':
+                self._render_group_readonly(content)
+            elif kind == 'artist':
+                self._render_artist_rec(
+                    getattr(self, '_current_artist_results', []),
+                    getattr(self, '_current_artist_top_tags', {}),
+                    self.input_nsfw.value,
+                    target=content,
+                    register=False,
+                )
+            elif kind == 'related':
+                self._render_related_list(
+                    self.current_related,
+                    self.input_nsfw.value,
+                    target=content,
+                    register=False,
+                )
+        dialog.open()
+
     # ── 关联推荐 ──────────────────────────────────────────────────────────
 
     def _refresh_related(self, related: list, show_nsfw: bool):
@@ -1973,26 +2114,31 @@ class DanbooruSearchUI:
             self._render_artist_rec(artist_results, top_tags, show_nsfw)
         self._debounce_artist_task = asyncio.ensure_future(_do())
 
-    def _render_artist_rec(self, artist_results, top_tags=None, show_nsfw: bool = True):
+    def _render_artist_rec(self, artist_results, top_tags=None, show_nsfw: bool = True, target=None, register=True):
         """渲染推荐画师列表（对标关联推荐样式）。"""
-        if self.artist_rec_list is None:
+        if self.artist_rec_list is None and target is None:
             return
-        self.artist_rec_list.clear()
-        self._artist_rec_checkboxes.clear()
-        self._current_artist_rec_tags.clear()
+        container = target if target is not None else self.artist_rec_list
+        if register:
+            self._artist_rec_checkboxes.clear()
+            self._current_artist_rec_tags.clear()
+            self._current_artist_results = list(artist_results) if artist_results else []
+            self._current_artist_top_tags = dict(top_tags) if top_tags else {}
+        container.clear()
 
         if not artist_results:
-            with self.artist_rec_list:
+            with container:
                 ui.label('暂无推荐画师').classes('text-sm text-gray-400 italic p-4')
             return
 
         top_tags = top_tags or {}
         selected_now = set(self._get_selected_tags())
 
-        with self.artist_rec_list:
+        with container:
             for r in artist_results[:10]:
                 artist = r.artist
-                self._current_artist_rec_tags.add(artist)
+                if register:
+                    self._current_artist_rec_tags.add(artist)
                 is_selected = artist in selected_now
                 # 归一化：除以命中标签数，cap 到 100%
                 normalized = min(r.score / max(r.hit_count, 1), 1.0)
@@ -2022,7 +2168,8 @@ class DanbooruSearchUI:
                         '', value=is_selected,
                         on_change=lambda e, t=artist: self._on_artist_rec_checkbox_change(t, e.value)
                     ).props('dense')
-                    self._artist_rec_checkboxes[artist] = cb
+                    if register:
+                        self._artist_rec_checkboxes[artist] = cb
 
                     # 画师名 + 信息
                     with ui.column().classes('flex-grow gap-0 min-w-0'):
@@ -2041,6 +2188,7 @@ class DanbooruSearchUI:
         """渲染 Group 同类扩展区域。"""
         if self.group_expansion_container is None:
             return
+        self._current_group_data = group_data
         self.group_expansion_container.clear()
         self._group_checkboxes.clear()
         group_key = _group_names_key(group_data)
