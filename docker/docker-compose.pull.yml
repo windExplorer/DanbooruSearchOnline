@@ -1,32 +1,39 @@
-# 已有镜像部署：直接使用已构建 / 已拉取的镜像启动（不自编译）。
-# 用法（在仓库根目录）：
-#   docker compose -f docker/docker-compose.pull.yml up -d
+# 生产部署件：直接使用已构建 / 已拉取的镜像启动，**无需仓库源码**。
+# 本文件可单独拷到目标服务器，配合一个可用镜像即可运行（挂载目录会自动创建）。
+#
+# 用法（任意目录，只要本文件在）：
+#   docker compose -f docker-compose.pull.yml up -d
 #
 # 镜像来源二选一：
-#   1) 本地已用 scripts/build-docker.sh 构建的 danbooru-search-online:latest（默认值）
-#   2) 推送到镜像仓库后的地址，例如：
-#        export DANBOORU_IMAGE=registry.example.com/your-name/danbooru-search-online:latest
-#     或修改下方 image 字段，再执行上面的命令。
+#   1) 本地已用 scripts/build-docker-cpu.ps1（或 .sh）构建的 danbooru-search-online-cpu:1.1.6
+#      （默认值；版本号 1.1.6 来自仓库根 VERSION 文件，与导出的 tar 包名一致）。
+#   2) 推送到镜像仓库后的地址，命令行覆盖（注意 CPU 版镜像名带 -cpu 后缀）：
+#        DANBOORU_IMAGE=registry.example.com/your-name/danbooru-search-online-cpu:1.1.6 \
+#          docker compose -f docker-compose.pull.yml up -d
 
 services:
   danbooru-search:
-    image: ${DANBOORU_IMAGE:-danbooru-search-online:latest}
+    image: ${DANBOORU_IMAGE:-danbooru-search-online-cpu:1.1.6}
     container_name: danbooru-search
     ports:
       - "7860:7860"
     environment:
+      # 服务监听地址（容器内固定 0.0.0.0，配合上方 ports 映射对外暴露）
       - DANBOORU_HOST=0.0.0.0
+      # 服务监听端口（需与上方 ports 映射的容器内端口一致）
       - DANBOORU_PORT=7860
-      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
-      - DANBOORU_DEVICE=${DANBOORU_DEVICE:-auto}
-    env_file:
-      - path: ../.env
-        required: false
+      # HuggingFace 镜像源（国内加速，用于下载模型权重）
+      - HF_ENDPOINT=https://hf-mirror.com
+      # 推理设备：默认 cpu（纯 CPU 推理，无需 GPU，适合 CPU 版镜像）
+      # 可选值：
+      #   auto → 默认检测，有可用 CUDA 时用 cuda，否则 cpu
+      #   cpu  → 强制使用 CPU
+      #   cuda → 强制使用 GPU（无可用 CUDA 时自动回退 cpu 并打印告警）
+      - DANBOORU_DEVICE=cpu
     volumes:
-      - model_cache:/app/model
-      - embedding_cache:/app/tags_embedding
+      # 模型目录挂载：直接复用项目根目录下的 model/（相对本 compose 文件上一级 ../model），
+      # 即把 <项目根>/model/bge-m3 挂进容器 /app/model，无需额外拷贝模型文件。
+      # 若希望用独立的本地目录而非复用项目 model/，可改为 ./model:/app/model（模型放 docker/model/bge-m3）。
+      - ../model:/app/model
+      - ./tags_embedding:/app/tags_embedding
     restart: unless-stopped
-
-volumes:
-  model_cache:
-  embedding_cache:

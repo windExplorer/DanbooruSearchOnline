@@ -22,7 +22,17 @@ tempsave/
 model/bge-m3
 # 全量编码缓存：首次启动生成，挂载 volume 持久化
 tags_embedding/
+# ⚠️ 构建脚本导出的镜像 tar 包（danbooru-search-online-cpu-<version>.tar 等）就落在项目根，
+#    而项目根正是构建上下文；若不排除，COPY . /app 会把上次导出的 tar 打进新镜像层，
+#    导致每次构建体积翻倍累加（750MB→1.46GB→2.19GB…）。必须排除所有镜像归档文件。
+*.tar
+*.tar.gz
+*.tgz
 
 # ── 不需要进镜像的目录 ──
 docs/
 scripts/
+# ⚠️ 注意：docker/wheels 与 docker/wheels-cpu（预下载的 torch wheel）【必须留在构建上下文】，
+#    供 Dockerfile 的 RUN --mount=type=bind 临时挂入安装；此处【绝不能】.dockerignore 排除它们，
+#    否则 bind mount 会报 "/docker/wheels..." not found。它们不进最终镜像由 Dockerfile 内的
+#    “COPY --exclude=docker/wheels...” 保证（已写），故保持上下文可见即可。

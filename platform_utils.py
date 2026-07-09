@@ -55,7 +55,10 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-import oss2
+# 注意：oss2 与 modelscope 是“可选依赖”，刻意不写在精简镜像的 requirements-docker.txt 里
+# （它们仅用于阿里云 OSS / 魔搭计数器上传等附加功能）。因此这里【不能】顶层 import，
+# 必须在真正用到它们的函数内部再做懒加载（见 _get_oss_bucket / read_bytes / resolve_model_path），
+# 否则未安装的环境下导入本模块就会直接抛 ModuleNotFoundError，导致整个服务无法启动。
 from typing import Literal, Optional
 
 

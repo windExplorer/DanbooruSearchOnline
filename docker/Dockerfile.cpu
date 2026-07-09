@@ -1,0 +1,85 @@
+# DanbooruSearchOnline —— 纯 CPU 版 Docker 镜像（不含 CUDA runtime，体积更小）
+#
+# 与 Dockerfile（CUDA 版）的区别：torch 用纯 CPU 版（torch-2.13.0+cpu-...-manylinux_2_28_x86_64.whl，
+# ~190MB，不含 CUDA kernel 代码），镜像体积约可从 CUDA 版的 ~2.9GB 降到 ~750MB，纯 CPU 推理
+# 功能不变、启动更快。
+#
+# 构建（在仓库根目录执行，构建上下文为项目根）：
+#   docker build -t danbooru-search-online-cpu:latest -f docker/Dockerfile.cpu .
+# 或用一键脚本： scripts/build-docker-cpu.sh  /  scripts/build-docker-cpu.ps1
+#   （CPU 脚本会先在宿主机从官方 CPU 源预下载 +cpu wheel 到 docker/wheels-cpu/，再构建）
+#
+# 说明：
+#   - 默认（.dockerignore）镜像仅含代码与依赖；bge-m3 模型权重（数 GB）与标签库
+#     向量编码缓存不进镜像（保持镜像小巧、构建快速）。运行时两种来源：
+#       1) 通过 compose 相对路径目录（docker/model_cache、docker/tags_embedding）挂载；
+#       2) 或首次启动自动从 HuggingFace Hub 下载模型并全量编码（见 docs/DOCKER.md）。
+#   - 模型与编码缓存都通过 compose 的相对路径目录持久化，首次慢、之后秒级启动。
+#   - 基础镜像用 python:3.12-slim（而非 python:3.12）显著缩小体积；slim 缺 libgomp1
+#     （torch 运行必需），已在装依赖时一并补上并清理 apt 缓存。
+#   - torch 用纯 CPU 版的 +cpu wheel：PyTorch 官方 CPU 专用源（download.pytorch.org/whl/cpu）
+#     在本机网络（宿主机）下正常可达、未被透明代理篡改；但**容器内**访问该源会被篡改导致
+#     pip 校验 sha256 失败，故不能在容器内直接装。方案：由 build-docker-cpu 脚本在**宿主机**
+#     预下载 torch-2.13.0+cpu wheel 到 docker/wheels-cpu/，构建时通过 BuildKit bind mount 临时
+#     挂入（不进镜像层），Dockerfile 直接用本地 wheel 安装。其余 torch 运行必需的轻量依赖
+#     （filelock / typing-extensions / sympy / networkx / jinja2 / fsspec / triton）与
+#     requirements-docker.txt 仍从中科大 PyPI 镜像安装（国内快、且该镜像存的是 PyPI 官方包）。
+#   - 若 docker/wheels-cpu/ 下没有 +cpu wheel，本 Dockerfile 会报错退出，请先运行
+#     scripts/build-docker-cpu 脚本（它会自动预下载）。
+#   - modelscope / oss2 不在 Docker 依赖内（代码里均为懒加载，未用到的功能不受影响）。
+#   - 容器默认绑定 0.0.0.0:7860（由 platform_utils.get_host_port() 读取环境变量），
+#     可直接对外暴露；如需改端口，设置环境变量 DANBOURU_PORT。
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 先装依赖，利用层缓存：仅依赖变更时才重新安装
+# 体积与速度优化（纯 CPU 部署）：
+#   1) 用宿主机预下载的 torch 纯 CPU 版 wheel（torch-2.13.0+cpu-...-manylinux_2_28_x86_64.whl）安装，
+#      该 wheel 经 BuildKit bind mount 临时挂入 /wheels，不进镜像层；仅 ~190MB，且不含
+#      CUDA kernel 代码（纯 CPU 推理用不到），故镜像明显小于 CUDA 版；
+#   2) 单独补装 torch 运行必需的轻量依赖（filelock / typing-extensions / sympy / networkx /
+#      jinja2 / fsspec / triton），CPU 推理无需 nvidia；
+#   3) 再装精简版依赖清单（不含 modelscope / oss2，含 sentence-transformers 等）。
+#      ⚠️ 关键：sentence-transformers 依赖 torch，pip 在解析时可能把已装的 2.13.0+cpu 当成
+#       “不满足”而再拉一份 CUDA 版 torch（本地版本标签 +cpu 易被误判），导致镜像反而比 CUDA 版还大。
+#       解决：用约束文件精确锁死 torch==2.13.0+cpu（正好匹配已装的本地 wheel），既不触发重新下载，
+#       又禁止 pip 安装普通 CUDA 版 2.13.0，确保最终镜像里只有纯 CPU 版 torch、不含 nvidia CUDA 运行时。
+# torch 不写在 requirements-docker.txt 内，由本步单独安装。
+COPY requirements-docker.txt .
+# 宿主机预下载的 +cpu wheel（docker/wheels-cpu/）通过 BuildKit bind mount 临时挂入，
+# 必须用 mount（而非 COPY）以免 wheel 文件留在镜像层导致虚胖。
+RUN --mount=type=bind,source=docker/wheels-cpu,target=/wheels,rw \
+    apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && (if ls /wheels/torch-*+cpu*.whl >/dev/null 2>&1; then \
+            pip install --no-cache-dir --no-deps /wheels/torch-*+cpu*.whl; \
+        else \
+            echo "ERROR: 未在 docker/wheels-cpu/ 下找到 torch +cpu wheel。" >&2; \
+            echo "       请先运行 scripts/build-docker-cpu（会宿主机预下载）；不要直接在容器内装 CPU 源（被代理篡改会 sha256 失败）。" >&2; \
+            exit 1; \
+        fi) \
+    && printf 'torch==2.13.0+cpu\n' > /tmp/torch_cpu_constraint.txt \
+    && pip install --no-cache-dir --progress-bar on -i https://mirrors.ustc.edu.cn/pypi/simple/ --trusted-host mirrors.ustc.edu.cn filelock typing-extensions sympy networkx jinja2 fsspec triton \
+    && pip install --no-cache-dir --progress-bar on -i https://mirrors.ustc.edu.cn/pypi/simple/ --trusted-host mirrors.ustc.edu.cn -c /tmp/torch_cpu_constraint.txt -r requirements-docker.txt
+
+# 非 root 用户运行
+RUN useradd -m -u 1000 user
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    # Docker 部署默认值：对外暴露 0.0.0.0:7860（可被 get_host_port() 读取覆盖）
+    DANBOURU_HOST=0.0.0.0 \
+    DANBOURU_PORT=7860
+
+# 复制项目代码（模型权重与编码缓存已通过 .dockerignore 排除）
+# --exclude 目的是把预下载的 torch +cpu wheel 目录排除在镜像之外（它已通过上面的 bind mount
+# 安装，不必再打进镜像层造成虚胖）。
+COPY --exclude=docker/wheels --exclude=docker/wheels-cpu --chown=user . /app
+
+EXPOSE 7860
+
+CMD ["python", "ui_nicegui.py"]

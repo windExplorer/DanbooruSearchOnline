@@ -194,7 +194,24 @@ def _get_git_commit() -> str:
 
 
 def _get_version() -> str:
-    """读取真实数字版本号。优先 CHANGELOG.md 顶部最新版本，回退包元数据 / pyproject.toml。"""
+    """读取真实数字版本号。
+
+    读取优先级（确保页面显示与镜像 tag / compose 完全一致）：
+      0) 仓库根 VERSION 文件 —— 构建 / 镜像 tag / compose 的统一真相源（随代码 COPY 进镜像，*不* 被 .dockerignore 排除）；
+      1) CHANGELOG.md 顶部最新版本（首个 ## [x.y.z] 条目，注意：*.md 被 .dockerignore 排除，容器内通常不存在，仅本地/开发时生效）；
+      2) 已安装包元数据（仅当项目被 pip install 时存在）；
+      3) pyproject.toml 的 project.version；
+      4) 环境变量 APP_VERSION，兜底 0.0.0。
+    """
+    # 0) VERSION 文件（与镜像 tag / compose 一致的唯一年份真相源）
+    try:
+        _base = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(_base, 'VERSION'), encoding='utf-8') as _f:
+            _v = _f.read().strip()
+            if re.match(r'^\d+\.\d+\.\d+$', _v):
+                return _v
+    except Exception:
+        pass
     # 1) CHANGELOG.md 顶部最新版本（首个 ## [x.y.z] 条目）
     try:
         _base = os.path.dirname(os.path.abspath(__file__))

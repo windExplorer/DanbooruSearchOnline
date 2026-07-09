@@ -1,0 +1,18 @@
+# Docker 镜像专用依赖清单（精简版）
+# 与 requirements.txt 的区别：去掉了 modelscope / oss2 —— 二者在代码里均为懒加载，
+# 自托管（走 HuggingFace / hf-mirror 下载、本地计数器）用不到，去掉可显著缩小镜像。
+# 若容器内确需阿里云 OSS 计数器或魔搭环境下载，仍可在运行时 pip install oss2 / modelscope。
+#
+# 注意：torch 不在此清单内！Dockerfile 中用 --no-deps 单独安装 torch（只下本体、不拉 ~2GB 的
+# nvidia-* CUDA 库，纯 CPU 部署用不到），见 Dockerfile 中的 pip install --no-deps torch。
+# sentence-transformers 依赖 torch，安装时会复用已装好的 torch（版本满足即不重复拉 CUDA 版）。
+nicegui
+pandas
+sentence-transformers
+jieba
+pyarrow
+safetensors
+huggingface_hub
+fastapi
+uvicorn
+mcp==1.27.0

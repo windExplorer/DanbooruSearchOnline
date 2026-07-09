@@ -1,37 +1,39 @@
-# 自编译部署：从源码构建镜像并启动。
-# 用法（在仓库根目录）：
+# 构建辅助：从源码构建镜像（需要整个仓库作为构建上下文）。
+# 这是"造镜像"的文件，不是部署文件；生产部署请用 docker-compose.pull.yml（只需镜像）。
+#
+# 用法（在仓库根目录，context: .. 即仓库根）：
 #   docker compose -f docker/docker-compose.build.yml up -d --build
 #
-# 构建也可改用一键脚本 scripts/build-docker.sh（或 .ps1），再执行本文件（去掉 --build）。
+# 构建也可改用一键脚本 scripts/build-docker.sh（或 .ps1），再部署时改用 pull 文件。
 
 services:
   danbooru-search:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: danbooru-search-online:latest
+    # 构建产物镜像名（CUDA 版，注意不带 -cpu 后缀，与 CPU 版 danbooru-search-online-cpu 区分）。
+    # 版本号 1.1.6 来自仓库根 VERSION 文件，需与 build-docker.sh / pyproject 保持一致。
+    image: danbooru-search-online:1.1.6
     container_name: danbooru-search
     ports:
       - "7860:7860"
     environment:
-      # 容器内绑定地址与端口（与 Dockerfile 默认值一致，显式写出便于修改）
+      # 服务监听地址（容器内固定 0.0.0.0，配合上方 ports 映射对外暴露）
       - DANBOORU_HOST=0.0.0.0
+      # 服务监听端口（需与上方 ports 映射的容器内端口一致）
       - DANBOORU_PORT=7860
-      # 国内加速 HuggingFace 模型下载；海外用户可改为官方（留空）
-      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
-      # 推理设备：auto（有 GPU 用 GPU，否则 CPU）/ cpu / cuda
-      - DANBOORU_DEVICE=${DANBOORU_DEVICE:-auto}
-    # 可选：本地 .env（含 DANBOORU_MODEL_PATH 等）注入容器；缺失不报错
-    env_file:
-      - path: ../.env
-        required: false
+      # HuggingFace 镜像源（国内加速，用于下载模型权重）
+      - HF_ENDPOINT=https://hf-mirror.com
+      # 推理设备：默认 cpu（纯 CPU 推理，无需 GPU，适合 CPU 版镜像）
+      # 可选值：
+      #   auto → 默认检测，有可用 CUDA 时用 cuda，否则 cpu
+      #   cpu  → 强制使用 CPU
+      #   cuda → 强制使用 GPU（无可用 CUDA 时自动回退 cpu 并打印告警）
+      - DANBOORU_DEVICE=cpu
     volumes:
-      # 模型权重：首次自动下载后持久化，避免每次重建镜像重新下载
-      - model_cache:/app/model
-      # 标签库向量编码缓存：首次全量编码后持久化，之后秒级启动
-      - embedding_cache:/app/tags_embedding
+      # 模型目录挂载：直接复用项目根目录下的 model/（相对本 compose 文件上一级 ../model），
+      # 即把 <项目根>/model/bge-m3 挂进容器 /app/model，无需额外拷贝模型文件。
+      # 若希望用独立的本地目录而非复用项目 model/，可改为 ./model:/app/model（模型放 docker/model/bge-m3）。
+      - ../model:/app/model
+      - ./tags_embedding:/app/tags_embedding
     restart: unless-stopped
-
-volumes:
-  model_cache:
-  embedding_cache:
