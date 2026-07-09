@@ -566,12 +566,14 @@ class DanbooruSearchUI:
                     height: 100% !important; overflow-y: auto; padding-right: 4px;
                 }
                 .search-right { flex: 1 1 auto !important; min-width: 0 !important; min-height: 0 !important;
-                                height: 100% !important; overflow-y: auto; }
+                                height: 100% !important;
+                                display: flex !important; flex-direction: column !important;
+                                overflow: hidden !important; }
                 @media (max-width: 900px) {
                     .search-split { flex-direction: column !important; height: auto !important; overflow: visible !important; }
                     .search-left { flex: 1 1 100% !important; max-width: 100% !important;
                                    height: auto !important; max-height: 45vh; overflow-y: auto; }
-                    .search-right { height: auto !important; min-height: 45vh; }
+                    .search-right { height: auto !important; min-height: 45vh; overflow-y: auto !important; }
                 }
 
                 /* 搜索输入框：更像舒展的多行文本域，而非单行 input */
@@ -622,12 +624,19 @@ class DanbooruSearchUI:
                 .search-btn .search-btn-icon { font-size: 1.2rem !important; margin-right: 8px !important; }
                 .search-btn .search-btn-text { font-size: 1rem !important; }
 
+                /* 结果区：填满右栏剩余高度，自身不滚动，空间下放到两栏卡片 */
+                .results-section { flex: 1 1 auto !important; min-height: 0 !important;
+                                   display: flex !important; flex-direction: column !important; }
+
                 /* 结果两栏并排 + 各自内部滚动（不再撑长整页） */
                 .two-col-layout {
                     display: flex !important;
                     flex-wrap: nowrap !important;
-                    align-items: flex-start !important;
+                    align-items: stretch !important;
                     gap: 16px !important;
+                    height: 100% !important;
+                    flex: 1 1 auto !important;
+                    min-height: 0 !important;
                 }
                 .two-col-layout > .col-left {
                     flex: 0 0 62% !important; min-width: 0 !important; max-width: 62% !important;
@@ -635,10 +644,21 @@ class DanbooruSearchUI:
                 .two-col-layout > .col-right {
                     flex: 0 0 36% !important; min-width: 0 !important; max-width: 36% !important;
                 }
+                /* 卡片：纵向 flex、有界高度、内部各区域各自独立滚动（外层不再滚动） */
+                .two-col-layout > .col-left,
+                .two-col-layout > .col-right {
+                    display: flex !important; flex-direction: column !important;
+                    min-height: 0 !important; max-height: 100% !important; overflow: hidden !important;
+                }
+                /* 各结果区域独立滚动容器：匹配标签结果 / 同类标签 / 推荐画师 / 关联推荐 */
+                .region-scroll { flex: 1 1 0 !important; min-height: 0 !important; overflow-y: auto !important; }
+                .region-grow2 { flex-grow: 2 !important; }
                 @media (max-width: 1100px) {
-                    .two-col-layout { flex-wrap: wrap !important; }
+                    .two-col-layout { flex-wrap: wrap !important; height: auto !important; }
                     .two-col-layout > .col-left,
-                    .two-col-layout > .col-right { flex: 1 1 100% !important; max-width: 100% !important; }
+                    .two-col-layout > .col-right { flex: 1 1 100% !important; max-width: 100% !important;
+                                                    max-height: none !important; }
+                    .region-scroll { max-height: 50vh !important; }
                 }
 
                 /* 主题美化（沉稳、干净，向原版蓝调收敛） */
@@ -671,9 +691,6 @@ class DanbooruSearchUI:
                 .nicegui-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
                 .nicegui-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
                 .nicegui-scroll::-webkit-scrollbar-track { background: transparent; }
-
-                /* 结果两栏在视口内各自内部滚动，避免整页无限下拉 */
-                .col-scroll { max-height: calc(100vh - 170px); overflow-y: auto; }
             </style>
             <script>
                 document.addEventListener('DOMContentLoaded', function() {
@@ -746,8 +763,8 @@ class DanbooruSearchUI:
                                 self._build_selection_bar()
                                 self.keywords_container = ui.row().classes('gap-2 items-center flex-wrap')
 
-                            # 结果区（内部滚动）
-                            self.results_section = ui.column().classes('w-full gap-5')
+                            # 结果区（内部滚动下放到各区域）
+                            self.results_section = ui.column().classes('w-full gap-5 results-section')
                             self.results_section.set_visibility(False)
                             with self.results_section:
                                 self._build_results_columns()
@@ -1250,7 +1267,7 @@ class DanbooruSearchUI:
         self.two_col_container = ui.element('div').classes('w-full two-col-layout')
         with self.two_col_container:
             # ── 左栏：语义匹配结果（表格）──
-            with ui.card().classes('col-left dt-card p-4 col-scroll nicegui-scroll'):
+            with ui.card().classes('col-left dt-card p-4 nicegui-scroll'):
                 with ui.row().classes('items-center justify-between mb-2 w-full'):
                     with ui.row().classes('items-center gap-2'):
                         ui.icon('table_chart', color='primary')
@@ -1258,13 +1275,14 @@ class DanbooruSearchUI:
                     ui.button('复制全部标签', icon='content_copy', on_click=self._copy_all_tags) \
                         .props('dense flat color=primary').classes('text-sm')
 
-                self.result_table = ui.table(
-                    columns=TABLE_COLUMNS,
-                    rows=[],
-                    pagination=0,
-                    selection='multiple',
-                    row_key='tag',
-                ).classes('w-full')
+                with ui.element('div').classes('region-scroll nicegui-scroll region-grow2'):
+                    self.result_table = ui.table(
+                        columns=TABLE_COLUMNS,
+                        rows=[],
+                        pagination=0,
+                        selection='multiple',
+                        row_key='tag',
+                    ).classes('w-full')
                 self.result_table.on('selection', self._update_selection_display)
                 self.result_table.on('link_click', self._mark_interaction)
                 self.result_table.on('translation_feedback', self.report_translation_error)
@@ -1362,12 +1380,12 @@ class DanbooruSearchUI:
                                 ui.label('基于标签分组数据，展示已选标签所属分组中的其他标签。勾选可加入已选。').style('font-size:14px;')
                     ui.button('根据已选刷新', icon='refresh', on_click=self._manual_refresh_group) \
                         .props('dense flat color=primary').classes('text-sm')
-                self.group_expansion_container = ui.column().classes('w-full gap-0')
+                self.group_expansion_container = ui.column().classes('region-scroll nicegui-scroll w-full gap-0')
                 with self.group_expansion_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
             # ── 右栏：推荐画师 + 关联推荐 ──
-            with ui.card().classes('col-right dt-card p-4 col-scroll nicegui-scroll'):
+            with ui.card().classes('col-right dt-card p-4 nicegui-scroll'):
                 # 推荐画师
                 with ui.row().classes('items-center justify-between w-full mb-2'):
                     with ui.row().classes('items-center gap-2'):
@@ -1379,7 +1397,7 @@ class DanbooruSearchUI:
                                     '基于标签-画师 NPMI 共现数据，根据您当前已选的标签，推荐擅长这些元素的画师。<br>悬停画师行可查看与该画师共现关联最强的标签。').style(
                                     'font-size:14px;line-height:1.5;')
 
-                self.artist_rec_list = ui.column().classes('w-full gap-0')
+                self.artist_rec_list = ui.column().classes('region-scroll nicegui-scroll w-full gap-0')
                 with self.artist_rec_list:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 
@@ -1400,7 +1418,7 @@ class DanbooruSearchUI:
                     ui.button('根据已选刷新', icon='refresh', on_click=self._manual_refresh_related) \
                         .props('dense flat color=primary').classes('text-sm')
 
-                self.related_list_container = ui.column().classes('w-full gap-0')
+                self.related_list_container = ui.column().classes('region-scroll nicegui-scroll w-full gap-0')
                 with self.related_list_container:
                     ui.label('请先搜索并勾选标签…').classes('text-sm text-gray-400 italic p-4')
 

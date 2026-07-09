@@ -6,6 +6,16 @@
 
 ---
 
+## [v1.1.3] - 2026-07-09
+
+结果面板滚动下放到四个区域，外层不再滚动。
+
+### 变更
+- 重构结果区高度链：`.search-right` 改为纵向 flex 且自身 `overflow: hidden`，`.results-section` 填满剩余高度，`.two-col-layout` 等高拉伸（`align-items: stretch; height: 100%`）。
+- 卡片（`.col-left` / `.col-right`）改为纵向 flex、有界高度（`max-height: 100%; overflow: hidden`），移除原先整卡滚动的 `col-scroll`。
+- 四个结果区域各自独立滚动：新增 `.region-scroll`（`flex:1 1 0; min-height:0; overflow-y:auto`），分别包裹「匹配标签结果」表格（`region-grow2` 占更大比例）、「同类标签」、`self.group_expansion_container`、「推荐擅长画师」、`self.related_list_container`、「关联推荐」。
+- 滚动条仅出现在这四个小块内部，整体面板 / 两栏卡片不再出现外层滚动条；移动端（≤1100px）区域限高 50vh、≤900px 兜底允许整页滚动。
+
 ## [v1.1.2] - 2026-07-09
 
 UI 微调：搜索体验与底部栏精简。
