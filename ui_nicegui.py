@@ -2410,6 +2410,37 @@ class DanbooruSearchUI:
 
     # ── 复制 / 反馈 ──────────────────────────────────────────────────────
 
+    def _copy_to_clipboard(self, text: str):
+        """复制文本到剪贴板。
+
+        优先用浏览器 Clipboard API（HTTPS / localhost 等安全上下文）；
+        在 http://IP:7860 这类**非安全上下文**下 navigator.clipboard 不可用，
+        自动降级到 execCommand('copy')（隐藏 textarea），保证「复制选中 / 复制全部」
+        按钮在普通 HTTP 访问时也能正常复制（否则点击无反应）。
+        """
+        js = (
+            "(() => {"
+            "  const text = " + _json.dumps(text) + ";"
+            "  const fallback = () => {"
+            "    const ta = document.createElement('textarea');"
+            "    ta.value = text;"
+            "    ta.setAttribute('readonly', '');"
+            "    ta.style.position = 'fixed';"
+            "    ta.style.top = '-1000px';"
+            "    document.body.appendChild(ta);"
+            "    ta.select();"
+            "    try { document.execCommand('copy'); } catch (e) {}"
+            "    document.body.removeChild(ta);"
+            "  };"
+            "  if (navigator.clipboard && navigator.clipboard.writeText) {"
+            "    navigator.clipboard.writeText(text).catch(() => fallback());"
+            "  } else {"
+            "    fallback();"
+            "  }"
+            "})();"
+        )
+        ui.run_javascript(js)
+
     def _toggle_prompt_format(self):
         if self.prompt_format == 'sdxl':
             self.prompt_format = 'nai'
@@ -2440,7 +2471,7 @@ class DanbooruSearchUI:
             else:
                 parts.append(_format_tag_with_weight(t, w, self.prompt_format))
         prompt = ', '.join(parts)
-        ui.clipboard.write(prompt)
+        self._copy_to_clipboard(prompt)
         fmt_label = {'sdxl': 'SDXL', 'nai': 'NAI', 'anima': 'Anima'}.get(self.prompt_format, 'SDXL')
         ui.notify(f'已复制选中标签（{fmt_label} 格式）!', type='positive')
 
@@ -2457,7 +2488,7 @@ class DanbooruSearchUI:
         tags_str = self.full_tags_str if show_nsfw_val else self.full_tags_str_sfw
         if tags_str:
             tags_str = tags_str.replace('(', '\\(').replace(')', '\\)')
-            ui.clipboard.write(tags_str)
+            self._copy_to_clipboard(tags_str)
             ui.notify('已复制全部标签!', type='positive')
         else:
             ui.notify('暂无标签可复制', type='warning')
